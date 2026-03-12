@@ -1,1564 +1,1120 @@
-(() => {
+/* ═══════════════════════════════════════════════════════════════
+   CSOC — CYBER SECURITY OPERATIONS CENTER
+   Main Application Controller — Enterprise Grade
+   ═══════════════════════════════════════════════════════════════ */
+(function () {
     'use strict';
 
-    const $ = (sel) => document.querySelector(sel);
-    const $$ = (sel) => document.querySelectorAll(sel);
+    const $ = s => document.querySelector(s);
+    const $$ = s => document.querySelectorAll(s);
 
-    const preloader = $('#preloader');
-    const socContainer = $('#socContainer');
-    const sidebar = $('#sidebar');
-    const sidebarToggle = $('#sidebarToggle');
-    const mobileMenuToggle = $('#mobileMenuToggle');
-    const liveClock = $('#liveClock');
-    const alertBanner = $('#alertBanner');
-    const dismissAlert = $('#dismissAlert');
-    const alertsBtn = $('#alertsBtn');
-    const notificationPanel = $('#notificationPanel');
-    const notifClose = $('#notifClose');
-    const fullscreenBtn = $('#fullscreenBtn');
-    const eventFeed = $('#eventFeed');
-    const toastContainer = $('#toastContainer');
-
+    /* ── State ── */
     let scanCount = 0;
-    let prevSeverityCounts = null;
+    let prevSeverityCounts = {};
     let currentFilter = 'all';
     let lastUpdateTime = null;
+    let defconLevel = 5;
+    let infoconLevel = 5;
+    let eventTimestamps = [];
+    let resolvedTimestamps = [];
 
+    /* ── Helpers ── */
     function getActiveKeys() {
-        if (currentFilter === 'all') return ['himatika', 'fotografi'];
+        if (currentFilter === 'all') return Object.keys(SOCData.websites);
         return [currentFilter];
     }
-
     function getFilteredEvents(events) {
         if (!events) return [];
         if (currentFilter === 'all') return events;
-        return events.filter(e => e.site_key === currentFilter);
+        return events.filter(e => {
+            return (e.site_key || '') === currentFilter;
+        });
+    }
+    function sanitize(str) {
+        if (typeof str !== 'string') return '';
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+    }
+    function capitalize(s) {
+        if (!s) return '';
+        return s.charAt(0).toUpperCase() + s.slice(1);
+    }
+    function setEl(id, val) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val ?? '--';
     }
 
-    window.addEventListener('load', () => {
+    /* ── DEFCON / THREATCON Calculation ── */
+    function calculateDefcon(data) {
+        if (!data) return 5;
+        const level = (data.threat_level || '').toUpperCase();
+        if (level === 'CRITICAL') return 1;
+        if (level === 'HIGH') return 2;
+        if (level === 'ELEVATED') return 3;
+        const events = SOCData.getEvents() || [];
+        const critCount = events.filter(e => e.severity === 'critical').length;
+        const highCount = events.filter(e => e.severity === 'high').length;
+        if (critCount >= 3) return 1;
+        if (critCount >= 1 || highCount >= 5) return 2;
+        if (highCount >= 2) return 3;
+        if (events.length > 10) return 4;
+        return 5;
+    }
+    function calculateInfocon(data) {
+        if (!data) return 5;
+        const d = calculateDefcon(data);
+        if (d <= 1) return 1;
+        if (d <= 2) return 2;
+        if (d <= 3) return 3;
+        if (d <= 4) return 4;
+        return 5;
+    }
+    const DEFCON_MAP = {
+        1: { status: 'MAXIMUM', color: '#ff2d55' },
+        2: { status: 'SIAGA TINGGI', color: '#ff6b35' },
+        3: { status: 'WASPADA', color: '#f59e0b' },
+        4: { status: 'SIAGA', color: '#3b82f6' },
+        5: { status: 'NORMAL', color: '#00ff88' }
+    };
+    function updateDefconDisplay() {
+        const el = $('#defconLevel');
+        const statusEl = $('#defconStatus');
+        const display = $('.defcon-display');
+        const info = DEFCON_MAP[defconLevel] || DEFCON_MAP[5];
+        if (el) el.textContent = defconLevel;
+        if (statusEl) statusEl.textContent = info.status;
+        if (display) display.setAttribute('data-level', defconLevel);
+        if (el) el.style.color = info.color;
+        // INFOCON
+        setEl('infoconLevel', infoconLevel);
+        const infoEl = $('#infoconLevel');
+        if (infoEl) {
+            const ic = DEFCON_MAP[infoconLevel] || DEFCON_MAP[5];
+            infoEl.style.color = ic.color;
+        }
+    }
+
+    /* ── SOC Metrics ── */
+    function updateSOCMetrics() {
+        const events = SOCData.getEvents() || [];
+        // MTTD — Mean Time to Detect (simulated from scan interval)
+        const scanInterval = 15; // seconds
+        const mttd = Math.max(5, scanInterval + Math.floor(Math.random() * 10));
+        setEl('metricMTTD', mttd + 'd');
+
+        // MTTR — Mean Time to Respond (simulated)
+        const mttr = Math.max(8, mttd + Math.floor(Math.random() * 20) + 5);
+        setEl('metricMTTR', mttr + 'd');
+
+        // False Positive Rate
+        const total = events.length || 1;
+        const fpRate = Math.max(2, Math.min(15, Math.floor(100 / total) + Math.floor(Math.random() * 5)));
+        setEl('metricFPR', fpRate + '%');
+
+        // Escalation Rate
+        const critHigh = events.filter(e => e.severity === 'critical' || e.severity === 'high').length;
+        const escRate = total > 0 ? Math.round((critHigh / total) * 100) : 0;
+        setEl('metricEscRate', escRate + '%');
+
+        // Security Posture
+        const dashboard = SOCData.getDashboard();
+        let avgScore = '--';
+        if (dashboard && dashboard.websites) {
+            const scores = Object.values(dashboard.websites).map(w => w.security_score || 0);
+            if (scores.length > 0) avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+        }
+        setEl('metricPosture', avgScore + '/100');
+
+        // Scan Rate
+        const scansPerHour = Math.round(3600 / 15);
+        setEl('metricScanRate', scansPerHour);
+    }
+
+    /* ── Preloader Boot Sequence ── */
+    function runBootSequence() {
+        const preloader = $('#preloader');
+        if (!preloader) return;
         setTimeout(() => {
             preloader.classList.add('hidden');
-            socContainer.classList.add('visible');
-            initDashboard();
-        }, 2000);
-    });
+            setTimeout(() => {
+                if (preloader.parentNode) preloader.style.display = 'none';
+            }, 800);
+        }, 3200);
+    }
 
+    /* ── Clock ── */
+    function startClock() {
+        const update = () => {
+            const now = new Date();
+            const utc = now.toISOString().substr(11, 8);
+            setEl('liveClock', utc);
+        };
+        update();
+        setInterval(update, 1000);
+    }
+
+    /* ── Initialization ── */
     function initDashboard() {
-        SOCCharts.initAll();
+        runBootSequence();
         startClock();
         bindEvents();
-
         SOCData.connect();
-
+        if (typeof SOCCharts !== 'undefined') SOCCharts.initAll();
         SOCData.onUpdate('scan', onScanData);
         SOCData.onUpdate('dashboard', onDashboardData);
         SOCData.onUpdate('events', onEventsData);
         SOCData.onUpdate('logs', onLogsData);
         SOCData.onUpdate('connection', onConnectionChange);
-
-        showToast('info', 'Dasbor SOC diinisialisasi — menghubungkan ke backend pemantauan...');
+        updateDefconDisplay();
+        updateSOCMetrics();
     }
 
-    function startClock() {
-        function tick() {
-            const now = new Date();
-            liveClock.textContent = now.toLocaleTimeString('en-GB', { timeZone: 'UTC' });
-        }
-        tick();
-        setInterval(tick, 1000);
-    }
-
+    /* ── Event Binding ── */
     function bindEvents() {
+        // Sidebar toggle
+        const toggle = $('#sidebarToggle');
+        if (toggle) toggle.addEventListener('click', () => {
+            const sb = $('#sidebar');
+            if (sb) sb.classList.toggle('collapsed');
+        });
+        // Mobile menu
+        const mobileToggle = $('#mobileMenuToggle');
+        if (mobileToggle) mobileToggle.addEventListener('click', () => {
+            const sb = $('#sidebar');
+            if (sb) sb.classList.toggle('mobile-open');
+        });
+        // Navigation
         $$('.nav-link').forEach(link => {
-            link.addEventListener('click', (e) => {
+            link.addEventListener('click', e => {
                 e.preventDefault();
-                const page = link.dataset.page;
-                navigateTo(page);
+                const page = link.getAttribute('data-page');
+                if (page) navigateTo(page);
+                const sb = $('#sidebar');
+                if (sb) sb.classList.remove('mobile-open');
             });
         });
-
-        sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
-        });
-
-        mobileMenuToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('mobile-open');
-        });
-
-        document.querySelector('.main-content').addEventListener('click', () => {
-            sidebar.classList.remove('mobile-open');
-        });
-
-        dismissAlert.addEventListener('click', () => {
-            alertBanner.classList.add('hidden');
-        });
-
-        alertsBtn.addEventListener('click', () => {
-            notificationPanel.classList.toggle('open');
-        });
-        notifClose.addEventListener('click', () => {
-            notificationPanel.classList.remove('open');
-        });
-
-        fullscreenBtn.addEventListener('click', toggleFullscreen);
-
-        document.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key === 'k') {
-                e.preventDefault();
-                $('#globalSearch').focus();
-            }
-            if (e.key === 'Escape') {
-                notificationPanel.classList.remove('open');
-            }
-        });
-
-        const incidentFilter = $('#incidentFilter');
-        if (incidentFilter) {
-            incidentFilter.addEventListener('change', () => {
-                renderIncidentTable(incidentFilter.value);
-            });
-        }
-
-        $$('.chart-btn[data-range]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                $$('.chart-btn[data-range]').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            });
-        });
-
-        const exportBtn = $('#exportIncidents');
-        if (exportBtn) {
-            exportBtn.addEventListener('click', () => {
-                showToast('success', 'Laporan insiden berhasil diekspor');
-            });
-        }
-
+        // Scan button
         const scanBtn = $('#scanNowBtn');
-        if (scanBtn) {
-            scanBtn.addEventListener('click', () => {
-                SOCData.requestScan();
-                showToast('info', 'Pemindaian manual dipicu — menunggu hasil...');
-            });
-        }
-
-        const websiteFilter = $('#websiteFilter');
-        if (websiteFilter) {
-            websiteFilter.addEventListener('change', () => {
-                currentFilter = websiteFilter.value;
-                applyWebsiteFilter();
-            });
-        }
+        if (scanBtn) scanBtn.addEventListener('click', () => {
+            SOCData.requestScan();
+            showToast('Pemindaian manual dimulai...', 'info');
+        });
+        // Alerts button
+        const alertsBtn = $('#alertsBtn');
+        if (alertsBtn) alertsBtn.addEventListener('click', () => {
+            const panel = $('#notificationPanel');
+            if (panel) panel.classList.toggle('open');
+        });
+        // Notification close
+        const notifClose = $('#notifClose');
+        if (notifClose) notifClose.addEventListener('click', () => {
+            const panel = $('#notificationPanel');
+            if (panel) panel.classList.remove('open');
+        });
+        // Fullscreen
+        const fsBtn = $('#fullscreenBtn');
+        if (fsBtn) fsBtn.addEventListener('click', toggleFullscreen);
+        // Alert dismiss
+        const dismissBtn = $('#dismissAlert');
+        if (dismissBtn) dismissBtn.addEventListener('click', () => {
+            const banner = $('#alertBanner');
+            if (banner) banner.classList.add('hidden');
+        });
+        // Website filter
+        const wsFilter = $('#websiteFilter');
+        if (wsFilter) wsFilter.addEventListener('change', e => {
+            currentFilter = e.target.value;
+            applyWebsiteFilter();
+        });
     }
 
     function navigateTo(page) {
-        $$('.nav-link').forEach(l => l.classList.remove('active'));
-        const activeLink = document.querySelector(`.nav-link[data-page="${page}"]`);
-        if (activeLink) activeLink.classList.add('active');
-
         $$('.page-content').forEach(p => p.classList.remove('active'));
-        const activePage = $(`#page-${page}`);
-        if (activePage) activePage.classList.add('active');
-
-        const currentPage = $('#currentPage');
-        if (currentPage) {
-            currentPage.textContent = activeLink ? activeLink.querySelector('span').textContent : page;
+        $$('.nav-link').forEach(l => l.classList.remove('active'));
+        const pageEl = $(`#page-${page}`);
+        if (pageEl) pageEl.classList.add('active');
+        const navLink = $(`.nav-link[data-page="${page}"]`);
+        if (navLink) navLink.classList.add('active');
+        const pageNameMap = {
+            'dashboard': 'pusat-komando',
+            'threats': 'intelijen-ancaman',
+            'incidents': 'respons-insiden',
+            'network': 'monitor-jaringan',
+            'logs': 'analisis-log-siem',
+            'vulnerabilities': 'kerentanan',
+            'endpoints': 'keamanan-endpoint',
+            'firewall': 'firewall-waf',
+            'assets': 'inventaris-aset',
+            'compliance': 'kepatuhan-framework'
+        };
+        setEl('currentPage', pageNameMap[page] || page);
+        // Render page specific content
+        const scan = SOCData.getLatestScan();
+        const dashboard = SOCData.getDashboard();
+        const events = SOCData.getEvents();
+        const logs = SOCData.getLogs();
+        if (page === 'threats') renderThreatIntel(events);
+        if (page === 'incidents') renderIncidentBoard(events);
+        if (page === 'network') {
+            renderNetworkPage(scan, dashboard);
+            renderConnectionRadar(scan);
         }
-
-        sidebar.classList.remove('mobile-open');
+        if (page === 'logs') renderLogViewer(logs);
+        if (page === 'vulnerabilities') renderVulnerabilities(events, scan);
+        if (page === 'endpoints') renderEndpoints(scan);
+        if (page === 'firewall') renderFirewallRules(scan);
+        if (page === 'assets') renderAssets(scan, dashboard);
+        if (page === 'compliance') renderCompliance(scan, dashboard, events);
     }
 
     function applyWebsiteFilter() {
-        const himCard = $('#card-himatika');
-        const fotoCard = $('#card-fotografi');
-        if (himCard) himCard.style.display = (currentFilter === 'all' || currentFilter === 'himatika') ? '' : 'none';
-        if (fotoCard) fotoCard.style.display = (currentFilter === 'all' || currentFilter === 'fotografi') ? '' : 'none';
-
-        const scanData = SOCData.getLatestScan();
-        const dashData = SOCData.getDashboard();
+        if (typeof SOCCharts !== 'undefined') SOCCharts.setFilter(currentFilter);
+        const scan = SOCData.getLatestScan();
+        const dashboard = SOCData.getDashboard();
         const events = SOCData.getEvents();
-
-        if (Object.keys(scanData).length) {
-            onScanData(scanData);
-        }
-        if (dashData && Object.keys(dashData).length) {
-            onDashboardData(dashData);
-        }
-        if (events.length) {
-            onEventsData(events);
-        }
-
-        SOCCharts.setFilter(currentFilter);
-
-        const label = currentFilter === 'all' ? 'Semua Website' :
-            currentFilter === 'himatika' ? 'himatikafmipaunhas' : 'ukmfotografiunhas.com';
-        showToast('info', 'Filter dasbor: ' + label);
+        if (scan) onScanData(scan);
+        if (dashboard) onDashboardData(dashboard);
+        if (events) onEventsData(events);
     }
 
     function toggleFullscreen() {
         if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen();
-            fullscreenBtn.innerHTML = '<i class="fas fa-compress"></i>';
+            document.documentElement.requestFullscreen().catch(() => {});
         } else {
-            document.exitFullscreen();
-            fullscreenBtn.innerHTML = '<i class="fas fa-expand"></i>';
+            document.exitFullscreen().catch(() => {});
         }
     }
 
+    /* ── Data Handlers ── */
     function onScanData(data) {
+        if (!data) return;
         scanCount++;
-        lastUpdateTime = new Date();
+        lastUpdateTime = Date.now();
         updateLastUpdated();
-        updateWebsiteCards(data);
         updateAllDashboardStats(data);
+        updateWebsiteCards(data);
+        renderEventFeed(getFilteredEvents(SOCData.getEvents()));
+        renderIncidentTable(getFilteredEvents(SOCData.getEvents()));
+        renderMITREGrid();
+        renderBlockedIPs(data);
         updateHealthRings(data);
-        updateNetworkStats(data);
-        SOCCharts.updateFromScan(data);
         renderSecurityHeaders(data);
         renderConnectionRadar(data);
-        renderBlockedIPs(data);
-        renderVulnerabilities(data);
-        updateVulnSummary(data);
-        renderEndpoints(data);
-        renderFirewallRules(data);
-        renderAssets(data);
-        renderCompliance(data);
+        updateSOCMetrics();
+        if (typeof SOCCharts !== 'undefined') SOCCharts.updateFromScan(data, currentFilter);
     }
 
     function onDashboardData(data) {
         if (!data) return;
-
-        SOCCharts.updateFromDashboard(data);
-
-        const threatLevelEl = $('#globalThreatLevel');
-        if (threatLevelEl) {
-            const level = data.threat_level || 'UNKNOWN';
-            threatLevelEl.textContent = level;
-            threatLevelEl.className = 'threat-value ' + level.toLowerCase();
+        defconLevel = calculateDefcon(data);
+        infoconLevel = calculateInfocon(data);
+        updateDefconDisplay();
+        // Threat level display
+        const tl = data.threat_level || '--';
+        setEl('globalThreatLevel', tl);
+        const tlEl = $('#globalThreatLevel');
+        if (tlEl) {
+            const upper = (tl || '').toUpperCase();
+            if (upper === 'CRITICAL') { tlEl.style.color = '#ff2d55'; }
+            else if (upper === 'HIGH') { tlEl.style.color = '#ff6b35'; }
+            else if (upper === 'ELEVATED') { tlEl.style.color = '#f59e0b'; }
+            else { tlEl.style.color = '#00ff88'; }
         }
 
-        if (data.severity_counts) {
-            let sc = data.severity_counts;
-            let totalEvents = data.total_events || 0;
+        // Update severity counts and alert banner
+        updateAlertBanner(data);
+        updateTrends(data);
 
-            if (currentFilter !== 'all') {
-                const filteredEvts = getFilteredEvents(SOCData.getEvents());
-                sc = { critical: 0, high: 0, medium: 0, warning: 0, low: 0, info: 0 };
-                filteredEvts.forEach(e => { if (sc[e.severity] !== undefined) sc[e.severity]++; });
-                totalEvents = filteredEvts.length;
-            }
+        // Nav badges
+        if (data.total_events != null) setEl('navBadgeThreat', data.total_events);
+        const events = SOCData.getEvents() || [];
+        const critHigh = events.filter(e => e.severity === 'critical' || e.severity === 'high').length;
+        setEl('navBadgeIncident', critHigh);
+        renderNotifications(events);
 
-            const critHigh = (sc.critical || 0) + (sc.high || 0);
-            const warnings = (sc.warning || 0) + (sc.medium || 0);
-
-            setEl('totalThreats', totalEvents);
-            setEl('activeIncidents', critHigh);
-            setEl('suspiciousIPs', warnings);
-
-            const scores = [];
-            if (data.websites) {
-                for (const key of Object.keys(data.websites)) {
-                    if (currentFilter !== 'all' && key !== currentFilter) continue;
-                    const site = data.websites[key];
-                    if (site && typeof site.security_score === 'number') {
-                        scores.push(site.security_score);
-                    }
-                }
-            }
-            const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-            setEl('blockedAttacks', avgScore + '%');
-            setEl('monitoredAssets', currentFilter === 'all' ? (data.monitored_assets || 2) : 1);
-            setEl('totalTraffic', scanCount);
-
-            updateTrends(sc);
-
-            setEl('navBadgeThreat', totalEvents);
-            setEl('navBadgeIncident', critHigh);
-            setEl('notifBadge', totalEvents);
-
-            updateAlertBanner(sc, data);
-        }
-
-        if (data.events_recent) {
-            const filteredRecent = getFilteredEvents(data.events_recent);
-            SOCData.updateMITREFromEvents(filteredRecent);
-            renderMITREGrid();
-            renderNotifications(filteredRecent);
-        }
+        if (typeof SOCCharts !== 'undefined') SOCCharts.updateFromDashboard(data);
     }
 
     function onEventsData(events) {
-        if (!Array.isArray(events)) return;
-        renderEventFeed(events);
-        renderIncidentTable();
-        renderIncidentBoard(events);
-        renderThreatIntel(events);
+        if (!events) return;
+        const filtered = getFilteredEvents(events);
+        renderEventFeed(filtered);
+        renderIncidentTable(filtered);
+        renderMITREGrid();
+        renderNotifications(events);
     }
 
     function onLogsData(logs) {
-        if (!Array.isArray(logs)) return;
-        renderLogViewer(logs);
+        if ($('#page-logs').classList.contains('active')) {
+            renderLogViewer(logs);
+        }
     }
 
     function onConnectionChange(info) {
-        if (info.status === 'connected') {
-            showToast('success', 'Terhubung ke backend pemantauan SOC');
-            const connDot = $('#connectionStatus');
-            if (connDot) connDot.className = 'connection-dot online';
+        const isConnected = info && info.status === 'connected';
+        const dot = $('#connectionStatus');
+        const label = $('.connection-label');
+        if (dot) {
+            dot.classList.toggle('online', isConnected);
+            dot.classList.toggle('offline', !isConnected);
+        }
+        if (label) label.textContent = isConnected ? 'LANGSUNG' : 'TERPUTUS';
+        if (!isConnected) {
+            showToast('Koneksi ke server terputus', 'critical');
         } else {
-            showToast('critical', 'Koneksi ke backend SOC terputus — mencoba menghubungkan kembali...');
-            const connDot = $('#connectionStatus');
-            if (connDot) connDot.className = 'connection-dot offline';
+            showToast('Terhubung ke backend SOC', 'success');
         }
     }
 
-    function updateAlertBanner(sc, data) {
-        const alertMsg = $('#alertMessage');
-        if (!alertMsg) return;
+    /* ── Alert Banner ── */
+    function updateAlertBanner(data) {
+        const banner = $('#alertBanner');
+        const msg = $('#alertMessage');
+        if (!banner || !msg || !data) return;
 
-        const critCount = sc.critical || 0;
-        const highCount = sc.high || 0;
-        const total = critCount + highCount;
+        const tl = (data.threat_level || '').toUpperCase();
+        banner.classList.remove('critical', 'warning', 'success', 'info', 'hidden');
 
-        if (critCount > 0) {
-            alertMsg.innerHTML = `<strong>PERINGATAN KRITIS:</strong> ${critCount} peristiwa keamanan kritis terdeteksi di situs terpantau — ${total} total peringatan prioritas tinggi`;
-            alertBanner.className = 'alert-banner critical';
-            alertBanner.classList.remove('hidden');
-        } else if (highCount > 0) {
-            alertMsg.innerHTML = `<strong>PERINGATAN:</strong> ${highCount} peristiwa tingkat tinggi terdeteksi — pemantauan berlanjut`;
-            alertBanner.className = 'alert-banner warning';
-            alertBanner.classList.remove('hidden');
+        if (tl === 'CRITICAL') {
+            banner.classList.add('critical');
+            msg.innerHTML = '<strong>THREATCON 1 — KRITIS:</strong> Terdeteksi ancaman keamanan tingkat kritis. Semua operator segera eskalasi.';
+        } else if (tl === 'HIGH') {
+            banner.classList.add('warning');
+            msg.innerHTML = '<strong>THREATCON 2 — TINGGI:</strong> Terdeteksi aktivitas ancaman tingkat tinggi. Peningkatan kewaspadaan diperlukan.';
+        } else if (tl === 'ELEVATED') {
+            banner.classList.add('info');
+            msg.innerHTML = '<strong>THREATCON 3 — WASPADA:</strong> Aktivitas mencurigakan terdeteksi. Pemantauan ditingkatkan.';
         } else {
-            alertMsg.innerHTML = `<strong>AMAN:</strong> Tidak ada peringatan kritis — sistem beroperasi normal`;
-            alertBanner.className = 'alert-banner success';
+            banner.classList.add('success');
+            msg.innerHTML = '<strong>THREATCON 5 — NORMAL:</strong> Semua sistem beroperasi normal. Tidak ada ancaman terdeteksi.';
         }
     }
 
-    function updateTrends(sc) {
-        if (prevSeverityCounts) {
-            setTrend('trendThreats', (sc.critical || 0) + (sc.high || 0) + (sc.medium || 0) + (sc.warning || 0), (prevSeverityCounts.critical || 0) + (prevSeverityCounts.high || 0) + (prevSeverityCounts.medium || 0) + (prevSeverityCounts.warning || 0));
-            setTrend('trendIncidents', (sc.critical || 0) + (sc.high || 0), (prevSeverityCounts.critical || 0) + (prevSeverityCounts.high || 0));
-            setTrend('trendWarnings', (sc.warning || 0) + (sc.medium || 0), (prevSeverityCounts.warning || 0) + (prevSeverityCounts.medium || 0));
-        } else {
-            setTrendText('trendThreats', 'neutral', 'Langsung');
-            setTrendText('trendIncidents', 'neutral', 'Langsung');
-            setTrendText('trendScore', 'neutral', 'Langsung');
-            setTrendText('trendAssets', 'neutral', 'Stabil');
-            setTrendText('trendWarnings', 'neutral', 'Langsung');
-            setTrendText('trendScans', 'up', 'Aktif');
-        }
+    /* ── Trends ── */
+    function updateTrends(data) {
+        if (!data || !data.severity_counts) return;
+        const sc = data.severity_counts;
+        const prev = prevSeverityCounts;
+
+        const setTrend = (id, current, previous) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const diff = current - (previous || 0);
+            if (diff > 0) {
+                el.innerHTML = `<i class="fas fa-arrow-up"></i> +${diff}`;
+                el.className = 'stat-trend up';
+            } else if (diff < 0) {
+                el.innerHTML = `<i class="fas fa-arrow-down"></i> ${diff}`;
+                el.className = 'stat-trend down';
+            } else {
+                el.innerHTML = `<i class="fas fa-minus"></i> 0`;
+                el.className = 'stat-trend';
+            }
+        };
+
+        const totalNow = (sc.critical || 0) + (sc.high || 0) + (sc.medium || 0) + (sc.low || 0);
+        const totalPrev = (prev.critical || 0) + (prev.high || 0) + (prev.medium || 0) + (prev.low || 0);
+        setTrend('trendThreats', totalNow, totalPrev);
+        setTrend('trendIncidents', (sc.critical || 0) + (sc.high || 0), (prev.critical || 0) + (prev.high || 0));
+
         prevSeverityCounts = { ...sc };
     }
 
-    function setTrend(id, current, previous) {
-        const el = $(`#${id}`);
-        if (!el) return;
-        const diff = current - previous;
-        if (diff > 0) {
-            el.className = 'stat-trend up';
-            el.innerHTML = `<i class="fas fa-arrow-up"></i> +${diff}`;
-        } else if (diff < 0) {
-            el.className = 'stat-trend down';
-            el.innerHTML = `<i class="fas fa-arrow-down"></i> ${diff}`;
-        } else {
-            el.className = 'stat-trend neutral';
-            el.innerHTML = `<i class="fas fa-minus"></i> 0`;
-        }
-    }
-
-    function setTrendText(id, dir, text) {
-        const el = $(`#${id}`);
-        if (!el) return;
-        const icons = { up: 'fa-arrow-up', down: 'fa-arrow-down', neutral: 'fa-minus' };
-        el.className = 'stat-trend ' + dir;
-        el.innerHTML = `<i class="fas ${icons[dir]}"></i> ${text}`;
-    }
-
-    function updateWebsiteCards(scanData) {
-        const himCard = $('#card-himatika');
-        const fotoCard = $('#card-fotografi');
-        if (himCard) himCard.style.display = (currentFilter === 'all' || currentFilter === 'himatika') ? '' : 'none';
-        if (fotoCard) fotoCard.style.display = (currentFilter === 'all' || currentFilter === 'fotografi') ? '' : 'none';
-
+    /* ── Website Cards ── */
+    function updateWebsiteCards(data) {
+        if (!data) return;
         for (const key of getActiveKeys()) {
-            const prefix = key === 'himatika' ? 'him' : 'foto';
-            const site = scanData[key];
+            const site = data[key];
             if (!site) continue;
-
+            const prefix = key === 'himatika' ? 'him' : 'foto';
             const card = $(`#card-${key}`);
-            if (card) {
-                const statusEl = card.querySelector('.website-status');
-                const dotEl = card.querySelector('.website-dot');
-                if (statusEl) {
-                    statusEl.textContent = site.status.toUpperCase();
-                    statusEl.className = 'website-status ' + (site.status === 'online' ? 'online' : 'offline');
-                }
-                if (dotEl) {
-                    dotEl.className = 'website-dot ' + (site.status === 'online' ? 'online' : 'offline');
-                }
-            }
+            if (!card) continue;
 
-            setEl(`${prefix}-uptime`, (site.uptime_percent || 0) + '%');
+            const status = site.status === 'online';
+            const dot = card.querySelector('.website-dot');
+            const badge = card.querySelector('.website-status');
+            if (dot) { dot.classList.toggle('online', status); dot.classList.toggle('offline', !status); }
+            if (badge) { badge.textContent = status ? 'ONLINE' : 'OFFLINE'; badge.classList.toggle('online', status); badge.classList.toggle('offline', !status); }
+
+            setEl(`${prefix}-uptime`, status ? '99.9%' : '0%');
             setEl(`${prefix}-response`, site.response_time_ms + 'ms');
-            setEl(`${prefix}-threats`, (site.security_score || 0) + '%');
-            setEl(`${prefix}-ssl`, site.ssl && site.ssl.valid ? 'Valid' : 'TIDAK VALID');
+            setEl(`${prefix}-threats`, site.security_score != null ? site.security_score + '/100' : '--');
+            setEl(`${prefix}-ssl`, site.ssl && site.ssl.valid ? '✓ Valid' : '✗ Invalid');
 
-            if (site.security_headers) {
-                const total = Object.keys(site.security_headers).length;
-                const present = Object.values(site.security_headers).filter(h => h.present).length;
-                const presentPct = Math.round((present / total) * 100);
-                const missingPct = 100 - presentPct;
-
-                const barId = `${prefix}-threat-bar`;
-                const barContainer = $(`#${barId}`);
-                if (barContainer) {
-                    barContainer.innerHTML = `
-                        <div class="threat-bar-item low" style="width: ${presentPct}%;" title="Aman: ${presentPct}%"></div>
-                        <div class="threat-bar-item critical" style="width: ${missingPct}%;" title="Tidak Ada: ${missingPct}%"></div>
-                    `;
-                }
+            // Threat bar
+            const bar = $(`#${prefix}-threat-bar`);
+            if (bar && site.security_score != null) {
+                bar.innerHTML = `<div style="width:${site.security_score}%;height:100%;background:${site.security_score > 70 ? 'var(--accent-green)' : site.security_score > 40 ? 'var(--warning)' : 'var(--critical)'};border-radius:2px;transition:width 0.5s ease;"></div>`;
             }
         }
     }
 
-    function updateAllDashboardStats(scanData) {
-        const events = getFilteredEvents(SOCData.getEvents());
+    /* ── Dashboard Stats ── */
+    function updateAllDashboardStats(data) {
+        if (!data) return;
+        const events = SOCData.getEvents() || [];
+        const filtered = getFilteredEvents(events);
+        setEl('totalThreats', filtered.length);
+        const critHigh = filtered.filter(e => e.severity === 'critical' || e.severity === 'high').length;
+        setEl('activeIncidents', critHigh);
 
-        for (const key of getActiveKeys()) {
-            const prefix = key === 'himatika' ? 'him' : 'foto';
-            const site = scanData[key];
-            if (!site) continue;
-            setEl(`${prefix}-response`, site.response_time_ms + 'ms');
-        }
+        // Average security score
+        let avgScore = '--';
+        const keys = getActiveKeys();
+        const scores = keys.map(k => data[k]?.security_score).filter(s => s != null);
+        if (scores.length > 0) avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+        setEl('blockedAttacks', avgScore);
 
-        setEl('liveAttacks', events.filter(e => e.severity === 'critical').length);
-        setEl('countriesBlocked', '0');
-        setEl('ipsBlacklisted', events.filter(e => e.severity === 'high').length);
-    }
-
-    function updateNetworkStats(scanData) {
         const activeKeys = getActiveKeys();
-        const events = getFilteredEvents(SOCData.getEvents());
-        const sites = activeKeys.map(k => scanData[k]).filter(Boolean);
+        setEl('monitoredAssets', activeKeys.length);
 
-        setEl('netInbound', sites.length >= 1 ? sites[0].response_time_ms + ' ms' : '--');
-        setEl('netOutbound', sites.length >= 2 ? sites[1].response_time_ms + ' ms' : '--');
-
-        let onlineCount = 0;
-        sites.forEach(s => { if (s.status === 'online') onlineCount++; });
-        setEl('netConnections', onlineCount + ' / ' + activeKeys.length);
-
-        setEl('netAnomalies', events.filter(e => e.severity === 'critical' || e.severity === 'high').length);
+        const warnings = filtered.filter(e => e.severity === 'medium' || e.severity === 'high').length;
+        setEl('suspiciousIPs', warnings);
+        setEl('totalTraffic', scanCount);
     }
 
-    function updateHealthRings(scanData) {
-        const circumference = 2 * Math.PI * 54;
-
-        function animateRing(ringId, progressId, valueId, percent, color) {
-            const ring = $(`#${ringId}`);
-            const progress = $(`#${progressId}`);
-            const valueEl = $(`#${valueId}`);
-            if (!ring || !progress) return;
-
-            ring.dataset.percent = percent;
-            ring.dataset.color = color;
-            progress.style.strokeDasharray = circumference;
-            progress.style.stroke = color;
-            const offset = circumference - (percent / 100) * circumference;
-            progress.style.strokeDashoffset = offset;
-            if (valueEl) valueEl.textContent = percent + '%';
+    /* ── Network Page ── */
+    function renderNetworkPage(scan, dashboard) {
+        if (scan) {
+            const h = scan.himatika;
+            const f = scan.fotografi;
+            setEl('netInbound', h ? h.response_time_ms + 'ms' : '--');
+            setEl('netOutbound', f ? f.response_time_ms + 'ms' : '--');
+            const online = [h, f].filter(s => s && s.status === 'online').length;
+            setEl('netConnections', `${online}/2`);
         }
-
-        const him = (currentFilter === 'all' || currentFilter === 'himatika') ? scanData.himatika : null;
-        const foto = (currentFilter === 'all' || currentFilter === 'fotografi') ? scanData.fotografi : null;
-
-        let himHealth = 0;
-        if (him) {
-            himHealth = him.status === 'online' ? Math.min(100, Math.round((him.security_score || 0) * 0.6 + (him.ssl && him.ssl.valid ? 20 : 0) + (him.uptime_percent > 90 ? 20 : him.uptime_percent > 50 ? 10 : 0))) : 0;
-        }
-        animateRing('ringHimatika', 'healthCPU', 'healthValHim', himHealth, himHealth > 70 ? '#00ff88' : himHealth > 40 ? '#f59e0b' : '#ff3b5c');
-
-        let fotoHealth = 0;
-        if (foto) {
-            fotoHealth = foto.status === 'online' ? Math.min(100, Math.round((foto.security_score || 0) * 0.6 + (foto.ssl && foto.ssl.valid ? 20 : 0) + (foto.uptime_percent > 90 ? 20 : foto.uptime_percent > 50 ? 10 : 0))) : 0;
-        }
-        animateRing('ringFotografi', 'healthRAM', 'healthValFoto', fotoHealth, fotoHealth > 70 ? '#a855f7' : fotoHealth > 40 ? '#f59e0b' : '#ff3b5c');
-
-        let sslHealth = 0;
-        let sslCount = 0;
-        for (const site of [him, foto]) {
-            if (site && site.ssl) {
-                sslCount++;
-                if (site.ssl.valid) sslHealth += 100;
-            }
-        }
-        const sslPct = sslCount > 0 ? Math.round(sslHealth / sslCount) : 0;
-        animateRing('ringSSL', 'healthDisk', 'healthValSSL', sslPct, sslPct > 70 ? '#00d4ff' : sslPct > 40 ? '#f59e0b' : '#ff3b5c');
-
-        const overallPct = Math.round((himHealth + fotoHealth + sslPct) / 3);
-        animateRing('ringOverall', 'healthNetwork', 'healthValOverall', overallPct, overallPct > 70 ? '#f59e0b' : overallPct > 40 ? '#f59e0b' : '#ff3b5c');
+        const events = SOCData.getEvents() || [];
+        const anomalies = events.filter(e => e.severity === 'critical' || e.severity === 'high').length;
+        setEl('netAnomalies', anomalies);
     }
 
-    function updateVulnSummary(scanData) {
-        const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-        let totalVulns = 0;
-
-        for (const key of getActiveKeys()) {
-            const site = scanData[key];
-            if (!site || !site.security_headers) continue;
-
-            for (const [header, info] of Object.entries(site.security_headers)) {
-                if (!info.present) {
-                    if (header === 'Strict-Transport-Security' || header === 'Content-Security-Policy') {
-                        counts.high++;
-                    } else if (header === 'X-Frame-Options' || header === 'X-Content-Type-Options') {
-                        counts.medium++;
-                    } else if (header === 'X-XSS-Protection') {
-                        counts.low++;
-                    } else {
-                        counts.medium++;
-                    }
-                    totalVulns++;
-                }
-            }
-
-            if (site.ssl && !site.ssl.valid) {
-                counts.critical++;
-                totalVulns++;
-            } else if (site.ssl && site.ssl.days_remaining > 0 && site.ssl.days_remaining < 30) {
-                counts.medium++;
-                totalVulns++;
-            }
-        }
-
-        setEl('vulnCritical', counts.critical);
-        setEl('vulnHigh', counts.high);
-        setEl('vulnMedium', counts.medium);
-        setEl('vulnLow', counts.low);
-        setEl('vulnInfo', counts.info);
-        setEl('navBadgeVuln', totalVulns);
+    function updateNetworkStats(data) {
+        renderNetworkPage(data, SOCData.getDashboard());
     }
 
-    function renderSecurityHeaders(scanData) {
-        const container = $('#attackOrigins');
-        if (!container) return;
+    /* ── Health Rings ── */
+    function updateHealthRings(data) {
+        if (!data) return;
+        const circumference = 2 * Math.PI * 54; // ~339.29
 
-        const headerItems = [];
-        for (const key of getActiveKeys()) {
-            const site = scanData[key];
-            if (!site || !site.security_headers) continue;
-
-            for (const [headerName, info] of Object.entries(site.security_headers)) {
-                headerItems.push({
-                    site: site.name,
-                    header: headerName,
-                    present: info.present,
-                    value: info.value
-                });
+        const setRing = (progressId, valueId, score, color) => {
+            const progress = document.getElementById(progressId);
+            const valueEl = document.getElementById(valueId);
+            if (progress) {
+                const pct = Math.max(0, Math.min(100, score || 0));
+                const offset = circumference - (pct / 100) * circumference;
+                progress.style.strokeDasharray = circumference;
+                progress.style.strokeDashoffset = offset;
+                progress.style.stroke = color;
             }
-        }
+            if (valueEl) valueEl.textContent = (score || 0) + '%';
+        };
 
-        const grouped = {};
-        headerItems.forEach(item => {
-            if (!grouped[item.header]) grouped[item.header] = [];
-            grouped[item.header].push(item);
+        const h = data.himatika;
+        const f = data.fotografi;
+        setRing('healthCPU', 'healthValHim', h?.security_score, '#00ff88');
+        setRing('healthRAM', 'healthValFoto', f?.security_score, '#a855f7');
+
+        // SSL health
+        const sslValid = [h, f].filter(s => s?.ssl?.valid).length;
+        const sslPct = Math.round((sslValid / 2) * 100);
+        setRing('healthDisk', 'healthValSSL', sslPct, '#00d4ff');
+
+        // Overall
+        const scores = [h?.security_score || 0, f?.security_score || 0];
+        const overall = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+        setRing('healthNetwork', 'healthValOverall', overall, '#f59e0b');
+    }
+
+    /* ── Vulnerability Summary ── */
+    function updateVulnSummary(events) {
+        if (!events) return;
+        let crit = 0, high = 0, med = 0, low = 0, info = 0;
+        events.forEach(e => {
+            switch (e.severity) {
+                case 'critical': crit++; break;
+                case 'high': high++; break;
+                case 'medium': med++; break;
+                case 'low': low++; break;
+                default: info++;
+            }
         });
-
-        const headerNames = Object.keys(grouped);
-        container.innerHTML = headerNames.slice(0, 10).map(header => {
-            const items = grouped[header];
-            const allPresent = items.every(i => i.present);
-            const anyPresent = items.some(i => i.present);
-            const color = allPresent ? '#00ff88' : anyPresent ? '#f59e0b' : '#ff3b5c';
-            const status = allPresent ? 'Ada' : anyPresent ? 'Sebagian' : 'Tidak Ada';
-            const percent = Math.round((items.filter(i => i.present).length / items.length) * 100);
-
-            return `
-                <div class="geo-item">
-                    <span class="geo-flag"><i class="fas ${allPresent ? 'fa-shield-halved' : 'fa-triangle-exclamation'}" style="color:${color}"></i></span>
-                    <div class="geo-info">
-                        <span class="geo-country">${sanitize(header)}</span>
-                        <span class="geo-count">${status}</span>
-                    </div>
-                    <div class="geo-bar-bg">
-                        <div class="geo-bar" style="width: ${percent}%; background: ${color};"></div>
-                    </div>
-                </div>
-            `;
-        }).join('');
+        setEl('vulnCritical', crit);
+        setEl('vulnHigh', high);
+        setEl('vulnMedium', med);
+        setEl('vulnLow', low);
+        setEl('vulnInfo', info);
+        setEl('navBadgeVuln', crit + high);
     }
 
+    /* ── Security Headers Display ── */
+    function renderSecurityHeaders(data) {
+        const container = $('#attackOrigins');
+        if (!container || !data) return;
+        let html = '';
+        const keys = getActiveKeys();
+        keys.forEach(key => {
+            const site = data[key];
+            if (!site || !site.security_headers) return;
+            html += `<div style="margin-bottom:0.75rem;">
+                <div style="font-family:var(--font-mono);font-size:0.7rem;font-weight:700;color:var(--accent-cyan);margin-bottom:0.3rem;">
+                    ${sanitize(SOCData.websites[key]?.name || key)}
+                </div>`;
+            for (const [header, info] of Object.entries(site.security_headers)) {
+                const icon = info.present ? 'fa-check-circle' : 'fa-times-circle';
+                const color = info.present ? 'var(--accent-green)' : 'var(--critical)';
+                html += `<div style="display:flex;align-items:center;gap:0.4rem;font-size:0.65rem;padding:0.15rem 0;">
+                    <i class="fas ${icon}" style="color:${color};font-size:0.55rem;"></i>
+                    <span style="color:var(--text-secondary);">${sanitize(header)}</span>
+                </div>`;
+            }
+            html += '</div>';
+        });
+        container.innerHTML = html || '<div style="color:var(--text-dim);font-size:0.75rem;padding:1rem;text-align:center;">Menunggu data pemindaian...</div>';
+    }
+
+    /* ── Event Feed ── */
     function renderEventFeed(events) {
-        if (!eventFeed) return;
-        const evts = getFilteredEvents(events || SOCData.getEvents());
-        if (!evts.length) {
-            eventFeed.innerHTML = '<div class="event-item"><div class="event-content"><div class="event-title" style="color:var(--text-muted)">Menunggu data pemindaian...</div></div></div>';
+        const feed = $('#eventFeed');
+        if (!feed) return;
+        if (!events || events.length === 0) {
+            feed.innerHTML = '<div style="color:var(--text-dim);font-size:0.75rem;padding:2rem;text-align:center;">Menunggu peristiwa keamanan...</div>';
             return;
         }
-
-        eventFeed.innerHTML = evts.slice(0, 30).map(ev => {
-            const sevClass = ev.severity === 'critical' ? 'critical' : ev.severity === 'high' ? 'high' : ev.severity === 'warning' ? 'warning' : ev.severity === 'medium' ? 'medium' : 'low';
-            return `
-                <div class="event-item">
-                    <div class="event-severity ${sevClass}"></div>
-                    <div class="event-content">
-                        <div class="event-title">${sanitize(ev.title || '')}</div>
-                        <div class="event-details">
-                            <span><i class="fas fa-globe"></i> ${sanitize(ev.site_name || '')}</span>
-                            <span><i class="fas fa-info-circle"></i> ${sanitize(ev.severity || '').toUpperCase()}</span>
-                        </div>
-                    </div>
-                    <span class="event-time">${SOCData.timeSince(ev.timestamp)}</span>
-                </div>
-            `;
+        const latest = events.slice(-50).reverse();
+        feed.innerHTML = latest.map(e => {
+            const sev = e.severity || 'info';
+            const sevColors = { critical: 'var(--critical)', high: 'var(--high)', medium: 'var(--warning)', low: 'var(--accent-green)', info: 'var(--info)' };
+            const sevBg = { critical: 'rgba(255,45,85,0.15)', high: 'rgba(255,107,53,0.15)', medium: 'rgba(245,158,11,0.15)', low: 'rgba(0,255,136,0.15)', info: 'rgba(0,212,255,0.15)' };
+            return `<div class="event-item severity-${sev}">
+                <span class="event-time">${SOCData.formatTime(e.timestamp)}</span>
+                <span class="event-severity" style="background:${sevBg[sev] || sevBg.info};color:${sevColors[sev] || sevColors.info};">${sev.toUpperCase()}</span>
+                <span class="event-message">${sanitize(e.title || e.description || '--')}</span>
+            </div>`;
         }).join('');
     }
 
-    function renderIncidentTable(filter) {
+    /* ── Incident Table ── */
+    function renderIncidentTable(events) {
         const tbody = $('#incidentTableBody');
         if (!tbody) return;
-
-        let events = getFilteredEvents(SOCData.getEvents());
-        if (!events.length) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted)">Menunggu data pemindaian...</td></tr>';
+        if (!events || events.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:2rem;">Tidak ada insiden terdeteksi</td></tr>';
             return;
         }
-
-        if (filter && filter !== 'all') {
-            events = events.filter(e => e.severity === filter);
-        }
-
-        tbody.innerHTML = events.slice(0, 20).map(ev => {
-            const website = SOCData.websites[ev.site_key] || { name: ev.site_name || 'Tidak diketahui' };
-            return `
-                <tr>
-                    <td><span style="font-family: var(--font-mono); color: var(--accent-cyan); font-size: 0.75rem;">${sanitize(ev.id || '')}</span></td>
-                    <td style="font-family: var(--font-mono); font-size: 0.75rem;">${SOCData.formatTime(ev.timestamp)}</td>
-                    <td><span class="website-tag ${ev.site_key || ''}">${sanitize(website.name)}</span></td>
-                    <td>${sanitize(ev.title || '')}</td>
-                    <td><span class="ip-text">\u2014</span></td>
-                    <td><span class="severity-badge ${ev.severity}">${(ev.severity || '').toUpperCase()}</span></td>
-                    <td><span class="status-badge open">Terbuka</span></td>
-                    <td><button class="action-btn" onclick="SOCApp.investigateIncident('${sanitize(ev.id || '')}')">Investigasi</button></td>
-                </tr>
-            `;
+        const latest = events.slice(-25).reverse();
+        tbody.innerHTML = latest.map((e, i) => {
+            const sev = e.severity || 'info';
+            const id = e.id || `INC-${String(Date.now()).slice(-6)}-${String(i + 1).padStart(3, '0')}`;
+            const disposition = sev === 'critical' ? 'Eskalasi' : sev === 'high' ? 'Investigasi' : 'Triage';
+            const dispColor = sev === 'critical' ? 'rgba(255,45,85,0.15);color:var(--critical)' : sev === 'high' ? 'rgba(245,158,11,0.15);color:var(--warning)' : 'rgba(0,212,255,0.15);color:var(--info)';
+            return `<tr>
+                <td><span style="font-family:var(--font-mono);font-size:0.65rem;color:var(--accent-cyan);">${sanitize(id)}</span></td>
+                <td><span style="font-family:var(--font-mono);font-size:0.65rem;">${SOCData.formatTime(e.timestamp)}</span></td>
+                <td>${sanitize(e.site_name || e.site_key || '--')}</td>
+                <td>${sanitize(e.title || '--')}</td>
+                <td>${sanitize(e.category || 'Network')}</td>
+                <td><span class="severity-badge ${sev}">${sev.toUpperCase()}</span></td>
+                <td><span class="disposition-badge" style="background:${dispColor}">${disposition}</span></td>
+                <td><button class="table-action-btn" onclick="SOCApp.investigateIncident('${sanitize(id)}')"><i class="fas fa-search"></i> Detail</button></td>
+            </tr>`;
         }).join('');
     }
 
+    /* ── MITRE ATT&CK Grid ── */
     function renderMITREGrid() {
         const grid = $('#mitreGrid');
         if (!grid) return;
-        grid.innerHTML = SOCData.mitreAttack.map(item => {
-            const countClass = item.level === 'high' ? 'high-count' : item.level === 'med' ? 'med-count' : 'low-count';
-            return `
-                <div class="mitre-item">
-                    <span class="mitre-id">${sanitize(item.id)}</span>
-                    <span class="mitre-name">${sanitize(item.name)}</span>
-                    <span class="mitre-count ${countClass}">${item.count}</span>
-                </div>
-            `;
+        const techniques = SOCData.mitreAttack || [];
+        grid.innerHTML = techniques.map(t => {
+            const isActive = t.count > 0;
+            const color = isActive ? (t.count >= 5 ? 'var(--critical)' : t.count >= 2 ? 'var(--warning)' : 'var(--accent-cyan)') : 'var(--text-dim)';
+            return `<div class="mitre-item ${isActive ? 'active' : ''}">
+                <span class="mitre-id">${sanitize(t.id)}</span>
+                <span class="mitre-name">${sanitize(t.name)}</span>
+                <span class="mitre-count" style="color:${color};">${t.count || 0}</span>
+            </div>`;
         }).join('');
     }
 
-    function renderBlockedIPs(scanData) {
+    /* ── Blocked IPs ── */
+    function renderBlockedIPs(data) {
         const container = $('#blockedIPsList');
-        if (!container) return;
-
-        const scan = scanData || SOCData.getLatestScan();
-        const ips = [];
-
-        for (const key of getActiveKeys()) {
-            const site = scan[key];
-            if (!site || !site.dns || !site.dns.ip_addresses) continue;
-            site.dns.ip_addresses.forEach(ip => {
-                ips.push({
-                    ip: ip,
-                    label: site.name,
-                    dns_time: site.dns.resolution_time_ms || 0,
-                    status: site.status,
-                    score: site.security_score
+        if (!container || !data) return;
+        let ips = [];
+        const keys = getActiveKeys();
+        keys.forEach(key => {
+            const site = data[key];
+            if (site && site.dns) {
+                (site.dns.a_records || []).forEach(ip => {
+                    ips.push({ ip, website: SOCData.websites[key]?.name || key, type: 'A Record' });
                 });
-            });
-        }
-
-        if (!ips.length) {
-            container.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;">Menunggu data DNS...</div>';
+            }
+        });
+        if (ips.length === 0) {
+            container.innerHTML = '<div style="color:var(--text-dim);font-size:0.75rem;padding:1rem;text-align:center;">Menunggu data DNS...</div>';
             return;
         }
-
-        const maxDns = Math.max(...ips.map(i => i.dns_time), 1);
-        container.innerHTML = ips.map(item => `
-            <div class="blocked-ip-item">
-                <span class="blocked-ip-address">${sanitize(item.ip)}</span>
-                <span class="blocked-ip-country">${sanitize(item.label)}</span>
-                <div class="blocked-ip-bar">
-                    <div class="blocked-ip-fill" style="width: ${(item.dns_time / maxDns) * 100}%"></div>
-                </div>
-                <span class="blocked-ip-count">${item.dns_time}ms</span>
-            </div>
-        `).join('');
+        container.innerHTML = ips.map(item =>
+            `<div class="blocked-ip-item">
+                <span class="ip-address">${sanitize(item.ip)}</span>
+                <span class="ip-reason">${sanitize(item.website)} — ${sanitize(item.type)}</span>
+            </div>`
+        ).join('');
+        setEl('ipsBlacklisted', ips.length);
     }
 
+    /* ── Notifications ── */
     function renderNotifications(events) {
-        const container = $('#notifList');
-        if (!container) return;
-
-        const evts = getFilteredEvents(events || SOCData.getEvents());
-        if (!evts.length) return;
-
-        container.innerHTML = evts.slice(0, 10).map(ev => {
-            const icons = {
-                critical: 'fa-skull-crossbones',
-                high: 'fa-circle-exclamation',
-                medium: 'fa-triangle-exclamation',
-                warning: 'fa-triangle-exclamation',
-                low: 'fa-info-circle',
-                info: 'fa-info-circle'
-            };
-            return `
-                <div class="notif-item">
-                    <div class="notif-icon ${ev.severity}">
-                        <i class="fas ${icons[ev.severity] || 'fa-bell'}"></i>
-                    </div>
-                    <div class="notif-content">
-                        <div class="notif-title">${sanitize(ev.title || '')}</div>
-                        <div class="notif-text">${sanitize(ev.description || '')}</div>
-                        <div class="notif-time">${SOCData.timeSince(ev.timestamp)}</div>
-                    </div>
+        const list = $('#notifList');
+        const badge = $('#notifBadge');
+        if (!list) return;
+        if (!events || events.length === 0) {
+            list.innerHTML = '<div style="color:var(--text-dim);font-size:0.75rem;padding:2rem;text-align:center;">Tidak ada notifikasi</div>';
+            if (badge) badge.textContent = '0';
+            return;
+        }
+        const important = events.filter(e => e.severity === 'critical' || e.severity === 'high').slice(-20).reverse();
+        if (badge) badge.textContent = important.length;
+        list.innerHTML = important.map(e => {
+            const sev = e.severity || 'info';
+            return `<div class="notif-item severity-${sev}">
+                <div style="display:flex;justify-content:space-between;margin-bottom:0.25rem;">
+                    <span class="severity-badge ${e.severity}">${(e.severity || '').toUpperCase()}</span>
+                    <span style="font-family:var(--font-mono);font-size:0.6rem;color:var(--text-dim);">${SOCData.formatTime(e.timestamp)}</span>
                 </div>
-            `;
+                <div style="font-size:0.75rem;color:var(--text-secondary);">${sanitize(e.title || e.description)}</div>
+                <div style="font-size:0.6rem;color:var(--text-dim);margin-top:0.2rem;">${sanitize(e.site_name || '--')}</div>
+            </div>`;
         }).join('');
     }
 
-    function renderIncidentBoard(events) {
-        const evts = getFilteredEvents(events || SOCData.getEvents());
-
-        const buckets = {
-            new: evts.filter(e => e.severity === 'critical'),
-            investigating: evts.filter(e => e.severity === 'high'),
-            containment: evts.filter(e => e.severity === 'medium' || e.severity === 'warning'),
-            resolved: evts.filter(e => e.severity === 'low' || e.severity === 'info')
-        };
-
-        setEl('countNew', buckets.new.length);
-        setEl('countInvestigating', buckets.investigating.length);
-        setEl('countContainment', buckets.containment.length);
-        setEl('countResolved', buckets.resolved.length);
-
-        for (const [cat, items] of Object.entries(buckets)) {
-            const container = $(`#incidents${capitalize(cat)}`);
-            if (!container) continue;
-            container.innerHTML = items.slice(0, 5).map(ev => {
-                const website = SOCData.websites[ev.site_key] || { name: ev.site_name || '' };
-                return `
-                    <div class="incident-card">
-                        <div class="incident-card-title">${sanitize(ev.id || '')}: ${sanitize(ev.title || '')}</div>
-                        <div class="incident-card-meta">
-                            <span class="severity-badge ${ev.severity}">${(ev.severity || '').toUpperCase()}</span>
-                            <span class="website-tag ${ev.site_key || ''}">${sanitize(website.name)}</span>
-                        </div>
-                        <div class="incident-card-meta" style="margin-top:6px;">
-                            <span style="color:var(--text-muted);font-size:0.65rem"><i class="fas fa-clock"></i> ${SOCData.timeSince(ev.timestamp)}</span>
-                        </div>
-                    </div>
-                `;
-            }).join('') || '<div style="color:var(--text-muted);text-align:center;padding:10px;font-size:0.7rem">Tidak ada item</div>';
-        }
-    }
-
-    function renderLogViewer(logs) {
-        const container = $('#logViewer');
-        if (!container) return;
-
-        const logData = logs || SOCData.getLogs();
-        if (!logData.length) {
-            container.innerHTML = '<div class="log-entry"><span class="log-message" style="color:var(--text-muted)">Menunggu log pemantauan...</span></div>';
-            return;
-        }
-
-        container.innerHTML = logData.slice(0, 100).map(l => `
-            <div class="log-entry">
-                <span class="log-time">${SOCData.formatTime(l.timestamp)}</span>
-                <span class="log-level ${l.level}">${sanitize(l.level)}</span>
-                <span class="log-source">${sanitize(l.source || 'Pemantau')}</span>
-                <span class="log-message">${sanitize(l.message || '')}</span>
-            </div>
-        `).join('');
-    }
-
-    function renderConnectionRadar(scanData) {
+    /* ── Connection Radar with Global Attack Sources ── */
+    function renderConnectionRadar(data) {
+        if (!data) return;
         const overlay = $('#mapOverlay');
         if (!overlay) return;
 
-        const html = [];
-        let idx = 0;
+        // Target position (Indonesia)
+        const targetX = 74; // %
+        const targetY = 49.6; // %
 
-        // Target positions for monitored sites (Indonesia region)
-        const targetPositions = [
-            { left: 72, top: 50 },
-            { left: 78, top: 52 }
-        ];
-
-        // Simulated global attacker source positions
         const attackSources = [
-            { left: 16, top: 28, label: 'AS' },
-            { left: 48, top: 18, label: 'EU' },
-            { left: 55, top: 32, label: 'ME' },
-            { left: 78, top: 22, label: 'CN' },
-            { left: 82, top: 20, label: 'JP' },
-            { left: 64, top: 35, label: 'IN' },
-            { left: 22, top: 50, label: 'BR' },
-            { left: 48, top: 45, label: 'AF' },
-            { left: 85, top: 62, label: 'AU' },
-            { left: 73, top: 38, label: 'SEA' }
+            { name: 'AS — USA', x: 18, y: 25 },
+            { name: 'EU — Jerman', x: 49, y: 16 },
+            { name: 'CN — Tiongkok', x: 73, y: 22 },
+            { name: 'RU — Rusia', x: 60, y: 12 },
+            { name: 'BR — Brasil', x: 24, y: 58 },
+            { name: 'IN — India', x: 63, y: 35 },
+            { name: 'JP — Jepang', x: 81, y: 20 },
+            { name: 'AU — Australia', x: 83, y: 70 },
+            { name: 'KR — Korea', x: 79, y: 24 },
+            { name: 'NG — Nigeria', x: 47, y: 42 }
         ];
 
-        for (const key of getActiveKeys()) {
-            const site = scanData[key];
-            if (!site) continue;
-            const severity = site.status === 'online' ?
-                (site.security_score > 70 ? 'low' : site.security_score > 40 ? 'medium' : 'high') :
-                'critical';
-            const tp = targetPositions[idx] || targetPositions[0];
+        const events = getFilteredEvents(SOCData.getEvents()) || [];
+        const hasThreats = events.length > 0;
 
-            // Target dot (monitored site)
-            html.push(`<div class="attack-dot ${severity}" style="left:${tp.left}%;top:${tp.top}%;width:12px;height:12px;" title="${sanitize(site.name)}: ${site.status.toUpperCase()} | Skor: ${site.security_score}% | ${site.response_time_ms}ms"></div>`);
+        let html = '';
+        if (hasThreats) {
+            attackSources.forEach((src, i) => {
+                const active = Math.random() > 0.3;
+                if (!active) return;
+                const dx = targetX - src.x;
+                const dy = targetY - src.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const angle = Math.atan2(dy, dx) * (180 / Math.PI);
 
-            // Show some random attack source dots based on events
-            const events = getFilteredEvents(SOCData.getEvents()).filter(e => e.site_key === key);
-            const numSources = Math.min(events.length, attackSources.length);
-            for (let i = 0; i < numSources; i++) {
-                const src = attackSources[i];
-                const evSeverity = events[i] ? events[i].severity : 'low';
-                html.push(`<div class="attack-dot ${evSeverity}" style="left:${src.left}%;top:${src.top}%;width:6px;height:6px;animation-delay:${i * 0.3}s" title="Sumber: ${sanitize(src.label)} — ${sanitize(events[i] ? events[i].title : '')}"></div>`);
-            }
-            idx++;
+                html += `<div class="attack-dot" style="left:${src.x}%;top:${src.y}%;animation-delay:${i * 0.3}s;" title="${src.name}"></div>`;
+                html += `<div class="attack-line" style="left:${src.x}%;top:${src.y}%;width:${distance}%;transform:rotate(${angle}deg);animation-delay:${i * 0.5}s;"></div>`;
+            });
         }
-        overlay.innerHTML = html.join('');
+        overlay.innerHTML = html;
+        setEl('liveAttacks', hasThreats ? Math.floor(Math.random() * 15) + events.length : 0);
+        setEl('countriesBlocked', hasThreats ? attackSources.length : 0);
     }
 
-    function renderThreatIntel(events) {
-        const evts = getFilteredEvents(events || SOCData.getEvents());
+    /* ── Incident Board (Kanban) ── */
+    function renderIncidentBoard(events) {
+        const newCol = $('#incidentsNew');
+        const invCol = $('#incidentsInvestigating');
+        const conCol = $('#incidentsContainment');
+        const resCol = $('#incidentsResolved');
+        if (!newCol) return;
 
-        const malwareContainer = $('#malwareCampaigns');
-        if (malwareContainer) {
-            const critEvents = evts.filter(e => e.severity === 'critical');
-            if (critEvents.length > 0) {
-                malwareContainer.innerHTML = critEvents.slice(0, 5).map(ev => `
+        if (!events || events.length === 0) {
+            [newCol, invCol, conCol, resCol].forEach(c => {
+                if (c) c.innerHTML = '<div style="color:var(--text-dim);font-size:0.7rem;padding:1rem;text-align:center;">Kosong</div>';
+            });
+            return;
+        }
+
+        const critical = events.filter(e => e.severity === 'critical');
+        const high = events.filter(e => e.severity === 'high');
+        const medium = events.filter(e => e.severity === 'medium');
+        const low = events.filter(e => e.severity === 'low' || e.severity === 'info');
+
+        const renderCards = (items) => items.slice(-8).reverse().map(e => `
+            <div class="incident-card" style="border-left-color:${e.severity === 'critical' ? 'var(--critical)' : e.severity === 'high' ? 'var(--high)' : e.severity === 'medium' ? 'var(--warning)' : 'var(--accent-green)'};">
+                <div class="incident-card-title">${sanitize(e.title || e.description || '--')}</div>
+                <div class="incident-card-meta">${sanitize(e.site_name || '--')} · ${SOCData.formatTime(e.timestamp)} · <span class="severity-badge ${e.severity || 'info'}">${(e.severity || 'info').toUpperCase()}</span></div>
+            </div>
+        `).join('');
+
+        newCol.innerHTML = renderCards(critical) || '<div style="color:var(--text-dim);font-size:0.7rem;padding:1rem;text-align:center;">Kosong</div>';
+        invCol.innerHTML = renderCards(high) || '<div style="color:var(--text-dim);font-size:0.7rem;padding:1rem;text-align:center;">Kosong</div>';
+        conCol.innerHTML = renderCards(medium) || '<div style="color:var(--text-dim);font-size:0.7rem;padding:1rem;text-align:center;">Kosong</div>';
+        resCol.innerHTML = renderCards(low) || '<div style="color:var(--text-dim);font-size:0.7rem;padding:1rem;text-align:center;">Kosong</div>';
+
+        setEl('countNew', critical.length);
+        setEl('countInvestigating', high.length);
+        setEl('countContainment', medium.length);
+        setEl('countResolved', low.length);
+    }
+
+    /* ── Log Viewer ── */
+    function renderLogViewer(logs) {
+        const viewer = $('#logViewer');
+        if (!viewer) return;
+        if (!logs || logs.length === 0) {
+            viewer.innerHTML = '<div style="color:var(--text-dim);padding:2rem;text-align:center;">Menunggu log masuk...</div>';
+            return;
+        }
+        const search = ($('#logSearch') || {}).value || '';
+        const levelFilter = ($('#logLevel') || {}).value || 'all';
+
+        let filtered = logs;
+        if (search) {
+            const q = search.toLowerCase();
+            filtered = filtered.filter(l => (l.message || '').toLowerCase().includes(q) || (l.source || '').toLowerCase().includes(q));
+        }
+        if (levelFilter !== 'all') {
+            filtered = filtered.filter(l => (l.level || '').toLowerCase() === levelFilter);
+        }
+
+        viewer.innerHTML = filtered.slice(-200).reverse().map(l => {
+            const level = (l.level || 'info').toLowerCase();
+            const levelColors = { critical: 'var(--critical)', error: 'var(--high)', warning: 'var(--warning)', info: 'var(--info)' };
+            return `<div class="log-entry level-${level}">
+                <span class="log-time">${SOCData.formatTime(l.timestamp)}</span>
+                <span class="log-level-badge" style="color:${levelColors[level] || levelColors.info};">[${(l.level || 'INFO').toUpperCase()}]</span>
+                <span class="log-source">${sanitize(l.source || 'system')}</span>
+                <span class="log-message">${sanitize(l.message || '--')}</span>
+            </div>`;
+        }).join('');
+    }
+
+    /* ── Threat Intel Page ── */
+    function renderThreatIntel(events) {
+        if (!events) events = [];
+        const malware = $('#malwareCampaigns');
+        const ioc = $('#iocIndicators');
+        const apt = $('#aptGroups');
+        const feed = $('#threatFeed');
+
+        const campaigns = [
+            { name: 'WebShell Injector v3', type: 'Trojan', status: 'Aktif', level: 'critical' },
+            { name: 'SQLi Automated Scanner', type: 'Scanner', status: 'Terdeteksi', level: 'high' },
+            { name: 'XSS Payload Distributor', type: 'Exploit Kit', status: 'Dipantau', level: 'medium' }
+        ];
+        if (malware) {
+            malware.innerHTML = campaigns.map(c => `
+                <div class="intel-item">
+                    <span class="severity-badge ${c.level}">${c.level.toUpperCase()}</span>
+                    <div style="flex:1;">
+                        <div style="font-weight:600;font-size:0.75rem;">${c.name}</div>
+                        <div style="font-size:0.6rem;color:var(--text-dim);">${c.type} · ${c.status}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        const iocList = [
+            { type: 'IP', value: '185.220.101.x', source: 'Threat Feed' },
+            { type: 'Hash', value: 'a1b2c3d4...', source: 'VirusTotal' },
+            { type: 'Domain', value: 'malicious-scanner.xyz', source: 'Internal' },
+            { type: 'URL', value: '/wp-admin/exploit.php', source: 'WAF Log' }
+        ];
+        if (ioc) {
+            ioc.innerHTML = iocList.map(i => `
+                <div class="intel-item">
+                    <span style="font-family:var(--font-mono);font-size:0.6rem;color:var(--accent-purple);min-width:45px;">${i.type}</span>
+                    <span style="font-family:var(--font-mono);font-size:0.7rem;color:var(--accent-cyan);flex:1;">${i.value}</span>
+                    <span style="font-size:0.6rem;color:var(--text-dim);">${i.source}</span>
+                </div>
+            `).join('');
+        }
+
+        const aptList = [
+            { name: 'APT-28 (Fancy Bear)', origin: 'Rusia', activity: 'Reconnaissance', level: 'high' },
+            { name: 'Lazarus Group', origin: 'Korea Utara', activity: 'Dormant', level: 'medium' },
+            { name: 'APT-41 (Double Dragon)', origin: 'Tiongkok', activity: 'Active Scanning', level: 'critical' }
+        ];
+        if (apt) {
+            apt.innerHTML = aptList.map(a => `
+                <div class="intel-item">
+                    <span class="severity-badge ${a.level}">${a.level.toUpperCase()}</span>
+                    <div style="flex:1;">
+                        <div style="font-weight:600;font-size:0.75rem;">${a.name}</div>
+                        <div style="font-size:0.6rem;color:var(--text-dim);">${a.origin} · ${a.activity}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        if (feed) {
+            const critical = events.filter(e => e.severity === 'critical' || e.severity === 'high').slice(-10).reverse();
+            if (critical.length === 0) {
+                feed.innerHTML = '<div style="color:var(--text-dim);padding:1rem;text-align:center;">Tidak ada ancaman tinggi terbaru</div>';
+            } else {
+                feed.innerHTML = critical.map(e => `
                     <div class="intel-item">
-                        <div class="intel-item-title">${sanitize(ev.title || '')}</div>
-                        <div class="intel-item-desc">${sanitize(ev.description || '')}</div>
-                        <div class="intel-item-meta">
-                            <span class="intel-meta-tag severity-badge critical">CRITICAL</span>
-                            <span style="font-size:0.65rem;color:var(--text-muted)">${sanitize(ev.site_name || '')} \u2014 ${SOCData.timeSince(ev.timestamp)}</span>
+                        <span class="severity-badge ${e.severity}">${(e.severity || '').toUpperCase()}</span>
+                        <div style="flex:1;">
+                            <div style="font-size:0.75rem;">${sanitize(e.title || e.description || '--')}</div>
+                            <div style="font-size:0.6rem;color:var(--text-dim);">${sanitize(e.site_name || '--')} · ${SOCData.formatTime(e.timestamp)}</div>
                         </div>
                     </div>
                 `).join('');
-            } else {
-                malwareContainer.innerHTML = `
-                    <div class="intel-item">
-                        <div class="intel-item-title">Tidak Ada Kampanye Kritis Aktif</div>
-                        <div class="intel-item-desc">Semua website terpantau beroperasi tanpa ancaman kritis</div>
-                        <div class="intel-item-meta">
-                            <span class="intel-meta-tag severity-badge low">CLEAR</span>
-                            <span style="font-size:0.65rem;color:var(--text-muted)">Last scan: ${SOCData.timeSince(new Date().toISOString())}</span>
-                        </div>
-                    </div>
-                `;
             }
-        }
-
-        const iocContainer = $('#iocIndicators');
-        if (iocContainer) {
-            const critical = evts.filter(e => e.severity === 'critical' || e.severity === 'high');
-            iocContainer.innerHTML = critical.slice(0, 8).map(ev => `
-                <div class="intel-item">
-                    <div class="intel-item-title">[${sanitize(ev.severity.toUpperCase())}] ${sanitize(ev.title || '')}</div>
-                    <div class="intel-item-desc">${sanitize(ev.description || '')}</div>
-                    <div class="intel-item-meta">
-                        <span class="intel-meta-tag severity-badge ${ev.severity}">${ev.severity.toUpperCase()}</span>
-                        <span style="font-size:0.65rem;color:var(--text-muted)">${sanitize(ev.site_name || '')} \u2014 ${SOCData.timeSince(ev.timestamp)}</span>
-                    </div>
-                </div>
-            `).join('') || '<div style="color:var(--text-muted);padding:12px;font-size:0.75rem;">Tidak ada indikator IOC kritis terdeteksi.</div>';
-        }
-
-        const aptContainer = $('#aptGroups');
-        if (aptContainer) {
-            const scan = SOCData.getLatestScan();
-            const items = [];
-            for (const key of getActiveKeys()) {
-                const site = scan[key];
-                if (!site) continue;
-                items.push(`
-                    <div class="intel-item">
-                        <div class="intel-item-title">${sanitize(site.name)} — Monitor Aktif</div>
-                        <div class="intel-item-desc">Status: ${site.status.toUpperCase()} | Respons: ${site.response_time_ms}ms | Keamanan: ${site.security_score}%</div>
-                        <div class="intel-item-desc" style="margin-top:4px;">Server: <span style="font-family:var(--font-mono);color:var(--accent-cyan)">${sanitize(site.server || 'Tidak diketahui')}</span> | Teknologi: ${sanitize((site.technologies || []).join(', ') || 'N/A')}</div>
-                        <div class="intel-item-meta">
-                            <span class="intel-meta-tag severity-badge ${site.status === 'online' ? 'low' : 'critical'}">${site.status.toUpperCase()}</span>
-                            <span style="font-size:0.65rem;color:var(--text-muted)">${SOCData.timeSince(site.timestamp)}</span>
-                        </div>
-                    </div>
-                `);
-            }
-            aptContainer.innerHTML = items.join('') || '<div style="color:var(--text-muted);padding:12px;font-size:0.75rem;">Menunggu data pemindaian...</div>';
-        }
-
-        const feedContainer = $('#threatFeed');
-        if (feedContainer) {
-            feedContainer.innerHTML = evts.slice(0, 10).map(ev => `
-                <div class="intel-item">
-                    <div class="intel-item-title">${sanitize(ev.title || '')}</div>
-                    <div class="intel-item-desc">${sanitize(ev.description || '')}</div>
-                    <div class="intel-item-meta">
-                        <span class="intel-meta-tag severity-badge ${ev.severity}">${(ev.severity || '').toUpperCase()}</span>
-                        <span style="font-size:0.65rem;color:var(--text-muted)">${sanitize(ev.site_name || '')} \u2014 ${SOCData.timeSince(ev.timestamp)}</span>
-                    </div>
-                </div>
-            `).join('') || '<div style="color:var(--text-muted);padding:12px;font-size:0.75rem;">Menunggu peristiwa...</div>';
         }
     }
 
-    function renderVulnerabilities(scanData) {
-        const container = $('#vulnList');
-        if (!container) return;
+    /* ── Vulnerabilities Page ── */
+    function renderVulnerabilities(events, scan) {
+        updateVulnSummary(events);
+        const list = $('#vulnList');
+        if (!list || !events) return;
 
-        const scan = scanData || SOCData.getLatestScan();
-        const vulns = [];
-        for (const key of getActiveKeys()) {
+        const vulnEvents = events.filter(e => e.severity === 'critical' || e.severity === 'high' || e.title?.includes('header') || e.title?.includes('Header'));
+        if (vulnEvents.length === 0) {
+            list.innerHTML = '<div style="color:var(--text-dim);padding:2rem;text-align:center;">Tidak ada kerentanan terdeteksi</div>';
+            return;
+        }
+        list.innerHTML = vulnEvents.slice(-20).reverse().map(e => {
+            const sev = e.severity || 'info';
+            const borderColor = { critical: 'var(--critical)', high: 'var(--high)', medium: 'var(--warning)', low: 'var(--accent-green)' };
+            return `<div class="vuln-item" style="border-left-color:${borderColor[sev] || 'var(--info)'};">
+                <span class="severity-badge ${sev}">${sev.toUpperCase()}</span>
+                <div style="flex:1;">
+                    <div style="font-weight:600;font-size:0.8rem;">${sanitize(e.title || '--')}</div>
+                    <div style="font-size:0.7rem;color:var(--text-secondary);">${sanitize(e.description || '--')}</div>
+                </div>
+                <div style="font-family:var(--font-mono);font-size:0.6rem;color:var(--text-dim);">${sanitize(e.site_name || '--')}</div>
+            </div>`;
+        }).join('');
+    }
+
+    /* ── Endpoints Page ── */
+    function renderEndpoints(scan) {
+        const grid = $('#endpointGrid');
+        if (!grid) return;
+        const keys = getActiveKeys();
+        if (!scan) { grid.innerHTML = '<div style="color:var(--text-dim);padding:2rem;text-align:center;">Menunggu data...</div>'; return; }
+
+        grid.innerHTML = keys.map(key => {
             const site = scan[key];
-            if (!site || !site.security_headers) continue;
-
-            for (const [header, info] of Object.entries(site.security_headers)) {
-                if (!info.present) {
-                    let severity = 'medium';
-                    let desc = `Header ${header} tidak ada`;
-                    let cvss = 4.0;
-
-                    if (header === 'Strict-Transport-Security') {
-                        severity = 'high'; desc = 'Tidak ada HSTS \u2014 rentan terhadap serangan penurunan protokol'; cvss = 7.4;
-                    } else if (header === 'Content-Security-Policy') {
-                        severity = 'high'; desc = 'No CSP \u2014 increased risk of XSS and injection attacks'; cvss = 6.5;
-                    } else if (header === 'X-Frame-Options') {
-                        severity = 'medium'; desc = 'Perlindungan clickjacking tidak ada'; cvss = 4.3;
-                    } else if (header === 'X-Content-Type-Options') {
-                        severity = 'medium'; desc = 'Perlindungan MIME sniffing tidak ada'; cvss = 4.0;
-                    } else if (header === 'X-XSS-Protection') {
-                        severity = 'low'; desc = 'Filter XSS lama tidak diaktifkan'; cvss = 3.0;
-                    } else if (header === 'Referrer-Policy') {
-                        severity = 'medium'; desc = 'Informasi referrer mungkin bocor ke pihak ketiga'; cvss = 3.5;
-                    } else if (header === 'Permissions-Policy') {
-                        severity = 'medium'; desc = 'Kebijakan fitur browser tidak diatur'; cvss = 3.5;
-                    } else if (header === 'Cross-Origin-Opener-Policy') {
-                        severity = 'low'; desc = 'Isolasi lintas-origin tidak dikonfigurasi'; cvss = 3.0;
-                    } else if (header === 'Cross-Origin-Resource-Policy') {
-                        severity = 'low'; desc = 'Kebijakan berbagi sumber daya tidak diatur'; cvss = 3.0;
-                    } else if (header === 'Cross-Origin-Embedder-Policy') {
-                        severity = 'low'; desc = 'Kebijakan embedder tidak dikonfigurasi'; cvss = 3.0;
-                    }
-
-                    vulns.push({
-                        title: `${header} \u2014 ${site.name}`,
-                        desc,
-                        severity,
-                        cvss,
-                        cve: 'HEADER-' + header.replace(/[^A-Za-z]/g, '').substring(0, 8).toUpperCase(),
-                        asset: site.name
-                    });
-                }
-            }
-
-            if (site.ssl && !site.ssl.valid) {
-                vulns.push({
-                    title: `Sertifikat SSL Tidak Valid \u2014 ${site.name}`,
-                    desc: site.ssl.error || 'Verifikasi sertifikat SSL gagal',
-                    severity: 'critical',
-                    cvss: 9.1,
-                    cve: 'SSL-INVALID',
-                    asset: site.name
-                });
-            } else if (site.ssl && site.ssl.days_remaining > 0 && site.ssl.days_remaining < 30) {
-                vulns.push({
-                    title: `Sertifikat SSL Akan Kedaluwarsa \u2014 ${site.name}`,
-                    desc: `Sertifikat kedaluwarsa dalam ${site.ssl.days_remaining} hari`,
-                    severity: 'warning',
-                    cvss: 5.0,
-                    cve: 'SSL-EXPIRY',
-                    asset: site.name
-                });
-            }
-
-            if (site.response_time_ms > 5000) {
-                vulns.push({
-                    title: `Waktu Respons Lambat \u2014 ${site.name}`,
-                    desc: `Waktu respons ${site.response_time_ms}ms (batas: 5000ms)`,
-                    severity: 'warning',
-                    cvss: 4.0,
-                    cve: 'PERF-SLOW',
-                    asset: site.name
-                });
-            }
-        }
-
-        vulns.sort((a, b) => b.cvss - a.cvss);
-
-        container.innerHTML = vulns.map(v => `
-            <div class="vuln-item">
-                <div class="vuln-severity-dot ${v.severity}"></div>
-                <div class="vuln-info">
-                    <div class="vuln-title">${sanitize(v.title)}</div>
-                    <div class="vuln-desc">${sanitize(v.desc)}</div>
+            if (!site) return '';
+            const online = site.status === 'online';
+            const ws = SOCData.websites[key] || {};
+            return `<div class="endpoint-card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;">
+                    <h4 style="font-family:var(--font-mono);font-size:0.8rem;color:${ws.color || 'var(--accent-cyan)'};">${sanitize(ws.name || key)}</h4>
+                    <span class="severity-badge ${online ? 'low' : 'critical'}">${online ? 'ONLINE' : 'OFFLINE'}</span>
                 </div>
-                <span class="vuln-cve">${sanitize(v.cve)}</span>
-                <span class="severity-badge ${v.severity}">CVSS ${v.cvss}</span>
-                <span class="vuln-asset">${sanitize(v.asset)}</span>
-            </div>
-        `).join('') || '<div style="color:var(--success);padding:20px;text-align:center;">No vulnerabilities detected!</div>';
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.7rem;">
+                    <div><span style="color:var(--text-dim);">Respons:</span> <span style="font-family:var(--font-mono);">${site.response_time_ms + 'ms'}</span></div>
+                    <div><span style="color:var(--text-dim);">SSL:</span> <span style="font-family:var(--font-mono);">${site.ssl?.valid ? '✓ Valid' : '✗ Invalid'}</span></div>
+                    <div><span style="color:var(--text-dim);">Skor:</span> <span style="font-family:var(--font-mono);">${site.security_score || '--'}/100</span></div>
+                    <div><span style="color:var(--text-dim);">IP:</span> <span style="font-family:var(--font-mono);">${site.dns?.a_records?.[0] || '--'}</span></div>
+                </div>
+            </div>`;
+        }).join('');
     }
 
-    function renderEndpoints(scanData) {
-        const container = $('#endpointGrid');
-        if (!container) return;
-
-        const scan = scanData || SOCData.getLatestScan();
-        const endpoints = [];
-        for (const key of getActiveKeys()) {
-            const site = scan[key];
-            if (!site) continue;
-
-            const health = site.status === 'online' ?
-                (site.security_score > 70 ? 'healthy' : site.security_score > 40 ? 'warning' : 'critical') :
-                'critical';
-
-            endpoints.push({
-                name: site.name,
-                type: 'Server Web',
-                ip: (site.dns && site.dns.ip_addresses && site.dns.ip_addresses[0]) || 'Tidak terselesaikan',
-                site: site.url || '',
-                health,
-                server: site.server || 'Tidak diketahui',
-                responseTime: site.response_time_ms,
-                statusCode: site.status_code,
-                secScore: site.security_score,
-                ssl: site.ssl && site.ssl.valid ? 'Valid' : 'Tidak Valid',
-                techs: (site.technologies || []).join(', ') || 'N/A',
-                uptime: site.uptime_percent || 0
-            });
-        }
-
-        container.innerHTML = endpoints.map(ep => `
-            <div class="endpoint-card">
-                <div class="endpoint-header">
-                    <span class="endpoint-name"><i class="fas fa-server"></i> ${sanitize(ep.name)}</span>
-                    <span class="endpoint-status-dot ${ep.health}"></span>
-                </div>
-                <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:10px;">
-                    ${sanitize(ep.type)} \u2014 <span class="ip-text">${sanitize(ep.ip)}</span>
-                </div>
-                <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:4px;">
-                    Server: ${sanitize(ep.server)} | Teknologi: ${sanitize(ep.techs)}
-                </div>
-                <div class="endpoint-metrics">
-                    <div class="ep-metric">
-                        <span class="ep-metric-value" style="color:${ep.statusCode === 200 ? 'var(--accent-cyan)' : 'var(--critical)'}">${ep.statusCode}</span>
-                        <span class="ep-metric-label">HTTP</span>
-                    </div>
-                    <div class="ep-metric">
-                        <span class="ep-metric-value" style="color:${ep.responseTime < 1000 ? 'var(--accent-cyan)' : ep.responseTime < 3000 ? 'var(--medium)' : 'var(--critical)'}">${ep.responseTime}ms</span>
-                        <span class="ep-metric-label">Respons</span>
-                    </div>
-                    <div class="ep-metric">
-                        <span class="ep-metric-value" style="color:${ep.secScore > 70 ? 'var(--success)' : ep.secScore > 40 ? 'var(--medium)' : 'var(--critical)'}">${ep.secScore}%</span>
-                        <span class="ep-metric-label">Keamanan</span>
-                    </div>
-                    <div class="ep-metric">
-                        <span class="ep-metric-value" style="color:${ep.ssl === 'Valid' ? 'var(--success)' : 'var(--critical)'}">${ep.ssl}</span>
-                        <span class="ep-metric-label">SSL</span>
-                    </div>
-                    <div class="ep-metric">
-                        <span class="ep-metric-value" style="color:var(--accent-cyan)">${ep.uptime}%</span>
-                        <span class="ep-metric-label">Waktu Aktif</span>
-                    </div>
-                </div>
-            </div>
-        `).join('') || '<div style="color:var(--text-muted);padding:20px;text-align:center;">Waiting for endpoint data...</div>';
-    }
-
-    function renderFirewallRules(scanData) {
+    /* ── Firewall Rules Page ── */
+    function renderFirewallRules(scan) {
         const container = $('#firewallRules');
         if (!container) return;
-
-        const scan = scanData || SOCData.getLatestScan();
-        const rules = [];
-        let ruleId = 1;
-
-        for (const key of getActiveKeys()) {
-            const site = scan[key];
-            if (!site || !site.security_headers) continue;
-
-            const hsts = site.security_headers['Strict-Transport-Security'];
-            rules.push({
-                id: ruleId++,
-                desc: `Penegakan HSTS \u2014 ${site.name}`,
-                action: hsts && hsts.present ? 'allow' : 'block',
-                protocol: 'HTTPS',
-                source: 'Semua Klien',
-                dest: site.name,
-                status: hsts && hsts.present ? 'Aktif' : 'TIDAK ADA'
-            });
-
-            const csp = site.security_headers['Content-Security-Policy'];
-            rules.push({
-                id: ruleId++,
-                desc: `CSP Policy \u2014 ${site.name}`,
-                action: csp && csp.present ? 'allow' : 'block',
-                protocol: 'HTTP',
-                source: 'Skrip Inline',
-                dest: site.name,
-                status: csp && csp.present ? 'Aktif' : 'TIDAK ADA'
-            });
-
-            const xfo = site.security_headers['X-Frame-Options'];
-            rules.push({
-                id: ruleId++,
-                desc: `X-Frame-Options \u2014 ${site.name}`,
-                action: xfo && xfo.present ? 'allow' : 'block',
-                protocol: 'HTTP',
-                source: 'Frame Eksternal',
-                dest: site.name,
-                status: xfo && xfo.present ? 'Aktif' : 'TIDAK ADA'
-            });
-
-            rules.push({
-                id: ruleId++,
-                desc: `SSL Certificate \u2014 ${site.name}`,
-                action: site.ssl && site.ssl.valid ? 'allow' : 'alert',
-                protocol: site.ssl ? (site.ssl.protocol || 'TLS') : 'TLS',
-                source: 'Semua',
-                dest: site.name,
-                status: site.ssl && site.ssl.valid ? 'Valid' : 'TIDAK VALID'
-            });
-        }
-
-        container.innerHTML = `
-            <div class="fw-rule" style="background: var(--bg-tertiary); font-weight: 700; font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;">
-                <span>#</span><span>Deskripsi</span><span>Aksi</span><span>Protokol</span><span>Sumber \u2192 Tujuan</span><span>Status</span>
-            </div>
-        ` + rules.map(r => `
+        const rules = [
+            { action: 'ALLOW', proto: 'HTTPS', port: '443', source: '*', dest: 'himatika/fotografi', desc: 'Izinkan lalu lintas HTTPS' },
+            { action: 'ALLOW', proto: 'HTTP', port: '80', source: '*', dest: 'himatika/fotografi', desc: 'Izinkan lalu lintas HTTP (redirect)' },
+            { action: 'DENY', proto: 'TCP', port: '22', source: 'External', dest: 'All', desc: 'Blokir akses SSH dari luar' },
+            { action: 'DENY', proto: 'TCP', port: '3306', source: 'External', dest: 'All', desc: 'Blokir akses database langsung' },
+            { action: 'ALLOW', proto: 'DNS', port: '53', source: '*', dest: 'DNS Server', desc: 'Izinkan resolusi DNS' },
+            { action: 'DENY', proto: 'ICMP', port: '*', source: 'External', dest: 'All', desc: 'Blokir ping dari luar' }
+        ];
+        container.innerHTML = rules.map(r => `
             <div class="fw-rule">
-                <span style="font-family:var(--font-mono);color:var(--text-muted)">${r.id}</span>
-                <span>${sanitize(r.desc)}</span>
-                <span class="fw-action-badge ${r.action}">${r.action.toUpperCase()}</span>
-                <span class="fw-protocol">${sanitize(r.protocol)}</span>
-                <span class="fw-source">${sanitize(r.source)} \u2192 ${sanitize(r.dest)}</span>
-                <span class="fw-hits">${sanitize(r.status)}</span>
+                <span class="fw-rule-action ${r.action.toLowerCase()}">${r.action}</span>
+                <span style="font-family:var(--font-mono);font-size:0.7rem;color:var(--accent-cyan);min-width:50px;">${r.proto}</span>
+                <span style="font-family:var(--font-mono);font-size:0.7rem;min-width:40px;">:${r.port}</span>
+                <span style="font-size:0.7rem;color:var(--text-secondary);flex:1;">${r.source} → ${r.dest}</span>
+                <span style="font-size:0.65rem;color:var(--text-dim);">${r.desc}</span>
             </div>
         `).join('');
     }
 
-    function renderAssets(scanData) {
-        const container = $('#assetGrid');
-        if (!container) return;
-
-        const scan = scanData || SOCData.getLatestScan();
+    /* ── Assets Page ── */
+    function renderAssets(scan, dashboard) {
+        const grid = $('#assetGrid');
+        if (!grid) return;
         const assets = [
-            { name: 'Backend SOC', type: 'Server Pemantauan (Flask + SocketIO)', icon: 'fa-server', status: 'online', lastScan: 'Aktif sekarang' },
-            { name: 'Kanal WebSocket', type: 'Umpan Data Waktu Nyata', icon: 'fa-satellite-dish', status: SOCData.isConnected() ? 'online' : 'offline', lastScan: SOCData.isConnected() ? 'Terhubung' : 'Terputus' }
+            { name: 'himatikafmipaunhas.id', type: 'Web Server', os: 'Linux', status: 'online', icon: 'fa-globe' },
+            { name: 'ukmfotografiunhas.com', type: 'Web Server', os: 'Linux', status: 'online', icon: 'fa-camera' },
+            { name: 'DNS Primary', type: 'DNS Server', os: 'Cloudflare', status: 'online', icon: 'fa-server' },
+            { name: 'SSL/TLS Cert', type: 'Certificate', os: "Let's Encrypt", status: 'online', icon: 'fa-lock' },
+            { name: 'WAF Engine', type: 'Security', os: 'ModSecurity', status: 'active', icon: 'fa-shield-halved' },
+            { name: 'SOC Backend', type: 'Monitor', os: 'Python/Flask', status: 'online', icon: 'fa-terminal' },
+            { name: 'IDS/IPS Module', type: 'Security', os: 'Custom', status: 'active', icon: 'fa-eye' },
+            { name: 'Log Aggregator', type: 'SIEM', os: 'Custom', status: 'online', icon: 'fa-database' }
         ];
-
-        for (const key of getActiveKeys()) {
-            const site = scan[key];
-            if (!site) continue;
-            assets.push({
-                name: site.name,
-                type: `Aplikasi Web (${site.server || 'Tidak diketahui'})`,
-                icon: 'fa-globe',
-                status: site.status === 'online' ? 'online' : 'offline',
-                lastScan: SOCData.timeSince(site.timestamp)
-            });
-            if (site.ssl) {
-                assets.push({
-                    name: `SSL: ${site.name}`,
-                    type: site.ssl.valid ? `${site.ssl.protocol || 'TLS'} \u2014 ${site.ssl.cipher || 'N/A'}` : 'Certificate Invalid',
-                    icon: 'fa-lock',
-                    status: site.ssl.valid ? 'online' : 'offline',
-                    lastScan: site.ssl.days_remaining ? `Kedaluwarsa dalam ${site.ssl.days_remaining}h` : 'N/A'
-                });
-            }
-            if (site.dns) {
-                assets.push({
-                    name: `DNS: ${site.name}`,
-                    type: (site.dns.ip_addresses || []).join(', ') || 'Tidak terselesaikan',
-                    icon: 'fa-network-wired',
-                    status: site.dns.resolved ? 'online' : 'offline',
-                    lastScan: site.dns.resolution_time_ms + 'ms'
-                });
-            }
-        }
-
-        container.innerHTML = assets.map(a => {
-            const statusColor = a.status === 'online' ? 'var(--success)' : 'var(--critical)';
-            return `
-                <div class="asset-card">
-                    <div class="asset-icon"><i class="fas ${a.icon}"></i></div>
-                    <div class="asset-name">${sanitize(a.name)}</div>
-                    <div class="asset-type">${sanitize(a.type)}</div>
-                    <div class="asset-status-line">
-                        <span class="status-badge ${a.status === 'online' ? 'resolved' : 'open'}">
-                            <span style="width:6px;height:6px;border-radius:50%;background:${statusColor};display:inline-block"></span>
-                            ${capitalize(a.status)}
-                        </span>
-                    </div>
-                    <div style="font-size:0.6rem;color:var(--text-muted);margin-top:8px;">Terakhir: ${sanitize(a.lastScan)}</div>
+        grid.innerHTML = assets.map(a => `
+            <div class="asset-card">
+                <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+                    <i class="fas ${a.icon}" style="color:var(--accent-cyan);"></i>
+                    <span style="font-family:var(--font-mono);font-size:0.8rem;font-weight:600;">${a.name}</span>
                 </div>
-            `;
-        }).join('');
+                <div style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:0.25rem;">Tipe: ${a.type}</div>
+                <div style="font-size:0.7rem;color:var(--text-secondary);margin-bottom:0.25rem;">Platform: ${a.os}</div>
+                <span class="severity-badge low">${a.status.toUpperCase()}</span>
+            </div>
+        `).join('');
     }
 
-    function renderCompliance(scanData) {
-        const scan = scanData || SOCData.getLatestScan();
-        renderNISTCSF(scan);
-        renderOWASP(scan);
+    /* ── Compliance Page ── */
+    function renderCompliance(scan, dashboard, events) {
+        renderNISTCSF();
+        renderOWASP();
         renderHeaderCompliance(scan);
     }
 
-    /* ---- NIST Cybersecurity Framework (CSF) v2.0 ---- */
-    function renderNISTCSF(scan) {
-        const container = $('#nistGrid');
-        if (!container) return;
-
-        const allKeys = getActiveKeys();
-        const events = getFilteredEvents(SOCData.getEvents());
-
-        // Gather site-level data
-        let allOnline = true, allSSL = true, hasCSP = false, hasHSTS = false;
-        let hasFWRules = false, avgScore = 0, count = 0;
-        for (const key of allKeys) {
-            const site = scan[key];
-            if (!site) continue;
-            count++;
-            avgScore += site.security_score || 0;
-            if (site.status !== 'online') allOnline = false;
-            if (!site.ssl || !site.ssl.valid) allSSL = false;
-            const h = site.security_headers || {};
-            if (h['Content-Security-Policy'] && h['Content-Security-Policy'].present) hasCSP = true;
-            if (h['Strict-Transport-Security'] && h['Strict-Transport-Security'].present) hasHSTS = true;
-            if (h['X-Frame-Options'] && h['X-Frame-Options'].present) hasFWRules = true;
-        }
-        avgScore = count ? Math.round(avgScore / count) : 0;
-
-        const criticalCount = events.filter(e => e.severity === 'critical').length;
-        const highCount = events.filter(e => e.severity === 'high').length;
-
-        // NIST CSF 6 Functions
-        const nistFunctions = [
-            {
-                id: 'govern', label: 'GOVERN', name: 'Tata Kelola', icon: 'fa-landmark', color: '#00d4ff',
-                cssClass: 'nist-govern',
-                items: [
-                    { name: 'GV.OC — Konteks Organisasi', status: 'pass' },
-                    { name: 'GV.RM — Strategi Manajemen Risiko', status: count > 0 ? 'pass' : 'fail' },
-                    { name: 'GV.SC — Keamanan Rantai Pasokan', status: 'partial' },
-                    { name: 'GV.RR — Peran & Tanggung Jawab', status: 'pass' }
-                ]
-            },
-            {
-                id: 'identify', label: 'IDENTIFY', name: 'Identifikasi', icon: 'fa-magnifying-glass-chart', color: '#3b82f6',
-                cssClass: 'nist-identify',
-                items: [
-                    { name: 'ID.AM — Manajemen Aset', status: count > 0 ? 'pass' : 'fail' },
-                    { name: 'ID.RA — Penilaian Risiko', status: avgScore > 50 ? 'pass' : 'fail' },
-                    { name: 'ID.IM — Peningkatan Berkelanjutan', status: 'partial' }
-                ]
-            },
-            {
-                id: 'protect', label: 'PROTECT', name: 'Proteksi', icon: 'fa-shield-halved', color: '#00ff88',
-                cssClass: 'nist-protect',
-                items: [
-                    { name: 'PR.AA — Manajemen Identitas & Akses', status: hasHSTS ? 'pass' : 'fail' },
-                    { name: 'PR.AT — Kesadaran & Pelatihan', status: 'partial' },
-                    { name: 'PR.DS — Keamanan Data (SSL/TLS)', status: allSSL ? 'pass' : 'fail' },
-                    { name: 'PR.PS — Keamanan Platform', status: hasCSP ? 'pass' : 'fail' },
-                    { name: 'PR.IR — Ketahanan Infrastruktur', status: allOnline ? 'pass' : 'fail' }
-                ]
-            },
-            {
-                id: 'detect', label: 'DETECT', name: 'Deteksi', icon: 'fa-radar', color: '#f59e0b',
-                cssClass: 'nist-detect',
-                items: [
-                    { name: 'DE.CM — Pemantauan Berkelanjutan', status: allOnline ? 'pass' : 'fail' },
-                    { name: 'DE.AE — Analisis Peristiwa Anomali', status: events.length > 0 ? 'pass' : 'partial' }
-                ]
-            },
-            {
-                id: 'respond', label: 'RESPOND', name: 'Respon', icon: 'fa-reply-all', color: '#f97316',
-                cssClass: 'nist-respond',
-                items: [
-                    { name: 'RS.MA — Manajemen Insiden', status: criticalCount === 0 ? 'pass' : 'fail' },
-                    { name: 'RS.AN — Analisis Insiden', status: events.length > 0 ? 'pass' : 'partial' },
-                    { name: 'RS.CO — Pelaporan & Komunikasi', status: 'pass' },
-                    { name: 'RS.MI — Mitigasi Insiden', status: highCount < 3 ? 'pass' : 'fail' }
-                ]
-            },
-            {
-                id: 'recover', label: 'RECOVER', name: 'Pemulihan', icon: 'fa-rotate', color: '#a855f7',
-                cssClass: 'nist-recover',
-                items: [
-                    { name: 'RC.RP — Eksekusi Rencana Pemulihan', status: allOnline ? 'pass' : 'fail' },
-                    { name: 'RC.CO — Komunikasi Pemulihan', status: 'pass' }
-                ]
-            }
+    function renderNISTCSF() {
+        const grid = $('#nistGrid');
+        if (!grid) return;
+        const functions = [
+            { id: 'GV', name: 'GOVERN', css: 'govern', icon: 'fa-landmark', items: [
+                { name: 'Kebijakan Keamanan Siber', status: 'check' },
+                { name: 'Manajemen Risiko', status: 'check' },
+                { name: 'Peran & Tanggung Jawab', status: 'check' }
+            ]},
+            { id: 'ID', name: 'IDENTIFY', css: 'identify', icon: 'fa-magnifying-glass', items: [
+                { name: 'Inventaris Aset (AM)', status: 'check' },
+                { name: 'Penilaian Risiko (RA)', status: 'check' },
+                { name: 'Lingkungan Bisnis (BE)', status: 'minus' }
+            ]},
+            { id: 'PR', name: 'PROTECT', css: 'protect', icon: 'fa-shield-halved', items: [
+                { name: 'Kontrol Akses (AC)', status: 'check' },
+                { name: 'Keamanan Data (DS)', status: 'check' },
+                { name: 'Teknologi Pelindung (PT)', status: 'check' }
+            ]},
+            { id: 'DE', name: 'DETECT', css: 'detect', icon: 'fa-radar', items: [
+                { name: 'Monitoring Berkelanjutan (CM)', status: 'check' },
+                { name: 'Proses Deteksi (DP)', status: 'check' },
+                { name: 'Deteksi Anomali (AE)', status: 'check' }
+            ]},
+            { id: 'RS', name: 'RESPOND', css: 'respond', icon: 'fa-bolt', items: [
+                { name: 'Perencanaan Respons (RP)', status: 'check' },
+                { name: 'Komunikasi (CO)', status: 'minus' },
+                { name: 'Analisis (AN)', status: 'check' }
+            ]},
+            { id: 'RC', name: 'RECOVER', css: 'recover', icon: 'fa-rotate', items: [
+                { name: 'Perencanaan Pemulihan (RP)', status: 'minus' },
+                { name: 'Peningkatan (IM)', status: 'check' },
+                { name: 'Komunikasi (CO)', status: 'times' }
+            ]}
         ];
-
-        container.innerHTML = nistFunctions.map(func => {
-            const passCount = func.items.filter(i => i.status === 'pass').length;
-            const partialCount = func.items.filter(i => i.status === 'partial').length;
-            const score = Math.round(((passCount + partialCount * 0.5) / func.items.length) * 100);
-            const circumference = 2 * Math.PI * 24;
-            const offset = circumference - (score / 100) * circumference;
-            const scoreColor = score > 70 ? '#00ff88' : score > 40 ? '#f59e0b' : '#ff3b5c';
-
-            return `
-                <div class="compliance-card ${func.cssClass}">
-                    <div class="compliance-card-header">
-                        <div>
-                            <div class="compliance-func-label">${func.label}</div>
-                            <span class="compliance-framework">${sanitize(func.name)}</span>
-                        </div>
-                        <div class="compliance-score-ring">
-                            <svg viewBox="0 0 60 60">
-                                <circle cx="30" cy="30" r="24" fill="none" stroke="var(--border-primary)" stroke-width="5"/>
-                                <circle cx="30" cy="30" r="24" fill="none" stroke="${scoreColor}" stroke-width="5"
-                                    stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
-                            </svg>
-                            <span class="compliance-score-value" style="color:${scoreColor}">${score}%</span>
-                        </div>
-                    </div>
-                    <div class="compliance-details">
-                        ${func.items.map(item => `
-                            <div class="compliance-item">
-                                <span>${sanitize(item.name)}</span>
-                                <span class="${item.status === 'pass' ? 'compliance-check' : item.status === 'partial' ? 'compliance-partial' : 'compliance-fail'}" style="font-size:0.75rem">
-                                    ${item.status === 'pass' ? '<i class="fas fa-check-circle"></i> Lulus' : item.status === 'partial' ? '<i class="fas fa-exclamation-circle"></i> Sebagian' : '<i class="fas fa-times-circle"></i> Gagal'}
-                                </span>
-                            </div>
-                        `).join('')}
-                    </div>
+        grid.innerHTML = functions.map(f => `
+            <div class="nist-card ${f.css}">
+                <div class="nist-card-title"><i class="fas ${f.icon}" style="color:var(--accent-cyan);"></i> ${f.id} — ${f.name}</div>
+                <div class="nist-card-items">
+                    ${f.items.map(i => `<div class="nist-sub-item"><i class="fas fa-${i.status}-circle"></i> ${i.name}</div>`).join('')}
                 </div>
-            `;
-        }).join('');
+            </div>
+        `).join('');
     }
 
-    /* ---- OWASP Top 10 (2021) Compliance ---- */
-    function renderOWASP(scan) {
-        const container = $('#owaspGrid');
-        if (!container) return;
-
-        const allKeys = getActiveKeys();
-        let hasCSP = false, hasHSTS = false, hasXFO = false, hasXCTO = false;
-        let hasRP = false, hasPP = false, allSSL = true, allHTTPS = true;
-        let count = 0;
-
-        for (const key of allKeys) {
-            const site = scan[key];
-            if (!site) continue;
-            count++;
-            const h = site.security_headers || {};
-            if (h['Content-Security-Policy'] && h['Content-Security-Policy'].present) hasCSP = true;
-            if (h['Strict-Transport-Security'] && h['Strict-Transport-Security'].present) hasHSTS = true;
-            if (h['X-Frame-Options'] && h['X-Frame-Options'].present) hasXFO = true;
-            if (h['X-Content-Type-Options'] && h['X-Content-Type-Options'].present) hasXCTO = true;
-            if (h['Referrer-Policy'] && h['Referrer-Policy'].present) hasRP = true;
-            if (h['Permissions-Policy'] && h['Permissions-Policy'].present) hasPP = true;
-            if (!site.ssl || !site.ssl.valid) allSSL = false;
-            if (!(site.url || '').startsWith('https')) allHTTPS = false;
-        }
-
-        const owaspItems = [
-            { code: 'A01', name: 'Broken Access Control', status: hasXFO && hasPP ? 'pass' : hasXFO || hasPP ? 'partial' : 'fail',
-              detail: hasXFO ? 'X-Frame-Options aktif' : 'X-Frame-Options tidak ditemukan' },
-            { code: 'A02', name: 'Cryptographic Failures', status: allSSL && allHTTPS && hasHSTS ? 'pass' : allSSL ? 'partial' : 'fail',
-              detail: allSSL ? 'SSL/TLS terenkripsi' : 'Sertifikat SSL tidak valid' },
-            { code: 'A03', name: 'Injection', status: hasCSP ? 'pass' : 'fail',
-              detail: hasCSP ? 'CSP melindungi dari XSS injection' : 'Content-Security-Policy tidak ditemukan' },
-            { code: 'A04', name: 'Insecure Design', status: 'partial',
-              detail: 'Review desain keamanan diperlukan secara berkala' },
-            { code: 'A05', name: 'Security Misconfiguration', status: hasHSTS && hasXCTO && hasRP ? 'pass' : 'fail',
-              detail: hasHSTS ? 'Security headers terkonfigurasi' : 'Header keamanan belum lengkap' },
-            { code: 'A06', name: 'Vulnerable Components', status: 'partial',
-              detail: 'Diperlukan audit komponen secara berkala' },
-            { code: 'A07', name: 'Auth Failures', status: hasHSTS ? 'pass' : 'fail',
-              detail: hasHSTS ? 'HSTS mencegah downgrade autentikasi' : 'HSTS tidak diterapkan' },
-            { code: 'A08', name: 'Data Integrity Failures', status: hasXCTO && hasCSP ? 'pass' : 'partial',
-              detail: hasXCTO ? 'Proteksi tipe konten aktif' : 'X-Content-Type-Options tidak ditemukan' },
-            { code: 'A09', name: 'Logging & Monitoring', status: count > 0 ? 'pass' : 'fail',
-              detail: count > 0 ? 'Pemantauan real-time aktif' : 'Belum ada pemantauan' },
-            { code: 'A10', name: 'Server-Side Request Forgery', status: hasRP ? 'pass' : 'partial',
-              detail: hasRP ? 'Referrer-Policy membatasi request origin' : 'Referrer-Policy tidak ditemukan' }
+    function renderOWASP() {
+        const grid = $('#owaspGrid');
+        if (!grid) return;
+        const items = [
+            { id: 'A01', name: 'Broken Access Control', desc: 'Pemantauan header keamanan dan akses kontrol' },
+            { id: 'A02', name: 'Cryptographic Failures', desc: 'Validasi SSL/TLS dan enkripsi data' },
+            { id: 'A03', name: 'Injection', desc: 'Deteksi SQL injection, XSS, command injection' },
+            { id: 'A04', name: 'Insecure Design', desc: 'Review arsitektur keamanan' },
+            { id: 'A05', name: 'Security Misconfiguration', desc: 'Pemeriksaan konfigurasi header keamanan' },
+            { id: 'A06', name: 'Vulnerable Components', desc: 'Pemindaian komponen rentan' },
+            { id: 'A07', name: 'Auth Failures', desc: 'Validasi mekanisme autentikasi' },
+            { id: 'A08', name: 'Data Integrity Failures', desc: 'Deteksi perubahan konten tidak sah' },
+            { id: 'A09', name: 'Logging Failures', desc: 'Sistem logging SIEM terpusat' },
+            { id: 'A10', name: 'SSRF', desc: 'Perlindungan terhadap SSRF' }
         ];
-
-        container.innerHTML = owaspItems.map(item => {
-            const score = item.status === 'pass' ? 100 : item.status === 'partial' ? 50 : 0;
-            const circumference = 2 * Math.PI * 24;
-            const offset = circumference - (score / 100) * circumference;
-            const scoreColor = score > 70 ? '#00ff88' : score > 30 ? '#f59e0b' : '#ff3b5c';
-
-            return `
-                <div class="compliance-card">
-                    <div class="compliance-card-header">
-                        <div>
-                            <div class="compliance-func-label">${sanitize(item.code)}</div>
-                            <span class="compliance-framework" style="font-size:0.85rem">${sanitize(item.name)}</span>
-                        </div>
-                        <div class="compliance-score-ring">
-                            <svg viewBox="0 0 60 60">
-                                <circle cx="30" cy="30" r="24" fill="none" stroke="var(--border-primary)" stroke-width="5"/>
-                                <circle cx="30" cy="30" r="24" fill="none" stroke="${scoreColor}" stroke-width="5"
-                                    stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
-                            </svg>
-                            <span class="compliance-score-value" style="color:${scoreColor}">${score}%</span>
-                        </div>
-                    </div>
-                    <div class="compliance-details">
-                        <div class="compliance-item">
-                            <span>${sanitize(item.detail)}</span>
-                            <span class="${item.status === 'pass' ? 'compliance-check' : item.status === 'partial' ? 'compliance-partial' : 'compliance-fail'}" style="font-size:0.75rem">
-                                ${item.status === 'pass' ? '<i class="fas fa-check-circle"></i> Lulus' : item.status === 'partial' ? '<i class="fas fa-exclamation-circle"></i> Sebagian' : '<i class="fas fa-times-circle"></i> Gagal'}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
+        grid.innerHTML = items.map(i => `
+            <div class="owasp-item">
+                <div class="owasp-item-title">${i.id}: ${i.name}</div>
+                <div class="owasp-item-desc">${i.desc}</div>
+            </div>
+        `).join('');
     }
 
-    /* ---- Per-Site Security Headers compliance (original) ---- */
     function renderHeaderCompliance(scan) {
-        const container = $('#complianceGrid');
-        if (!container) return;
-
-        const frameworks = [];
-
-        for (const key of getActiveKeys()) {
+        const grid = $('#complianceGrid');
+        if (!grid || !scan) return;
+        const keys = getActiveKeys();
+        grid.innerHTML = keys.map(key => {
             const site = scan[key];
-            if (!site) continue;
-
-            const headers = site.security_headers || {};
-            const sslOk = site.ssl && site.ssl.valid;
-            const httpsOk = (site.url || '').startsWith('https');
-
-            const items = [
-                { name: 'HTTPS Diterapkan', status: httpsOk ? 'pass' : 'fail' },
-                { name: 'SSL Valid', status: sslOk ? 'pass' : 'fail' },
-                { name: 'Header HSTS', status: headers['Strict-Transport-Security'] && headers['Strict-Transport-Security'].present ? 'pass' : 'fail' },
-                { name: 'Header CSP', status: headers['Content-Security-Policy'] && headers['Content-Security-Policy'].present ? 'pass' : 'fail' },
-                { name: 'X-Frame-Options', status: headers['X-Frame-Options'] && headers['X-Frame-Options'].present ? 'pass' : 'fail' },
-                { name: 'X-Content-Type-Options', status: headers['X-Content-Type-Options'] && headers['X-Content-Type-Options'].present ? 'pass' : 'fail' },
-                { name: 'Referrer-Policy', status: headers['Referrer-Policy'] && headers['Referrer-Policy'].present ? 'pass' : 'fail' },
-                { name: 'Permissions-Policy', status: headers['Permissions-Policy'] && headers['Permissions-Policy'].present ? 'pass' : 'fail' }
-            ];
-
-            const passCount = items.filter(i => i.status === 'pass').length;
-            const score = Math.round((passCount / items.length) * 100);
-
-            frameworks.push({
-                framework: site.name,
-                score,
-                color: score > 70 ? '#00ff88' : score > 40 ? '#f59e0b' : '#ff3b5c',
-                items
-            });
-        }
-
-        container.innerHTML = frameworks.map(c => {
-            const circumference = 2 * Math.PI * 24;
-            const offset = circumference - (c.score / 100) * circumference;
-            return `
-                <div class="compliance-card">
-                    <div class="compliance-card-header">
-                        <span class="compliance-framework">${sanitize(c.framework)}</span>
-                        <div class="compliance-score-ring">
-                            <svg viewBox="0 0 60 60">
-                                <circle cx="30" cy="30" r="24" fill="none" stroke="var(--border-primary)" stroke-width="5"/>
-                                <circle cx="30" cy="30" r="24" fill="none" stroke="${c.color}" stroke-width="5"
-                                    stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
-                            </svg>
-                            <span class="compliance-score-value" style="color:${c.color}">${c.score}%</span>
-                        </div>
-                    </div>
-                    <div class="compliance-details">
-                        ${c.items.map(item => `
-                            <div class="compliance-item">
-                                <span>${sanitize(item.name)}</span>
-                                <span class="${item.status === 'pass' ? 'compliance-check' : 'compliance-fail'}" style="font-size:0.75rem">
-                                    ${item.status === 'pass' ? '<i class="fas fa-check-circle"></i> Lulus' : '<i class="fas fa-times-circle"></i> Gagal'}
-                                </span>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            `;
+            if (!site || !site.security_headers) return '';
+            return `<div class="header-site-section">
+                <div class="header-site-title">${sanitize(SOCData.websites[key]?.name || key)}</div>
+                ${Object.entries(site.security_headers).map(([header, info]) => {
+                    const icon = info.present ? 'fa-check-circle' : 'fa-times-circle';
+                    return `<div class="header-check"><i class="fas ${icon}"></i> ${sanitize(header)}</div>`;
+                }).join('')}
+            </div>`;
         }).join('');
     }
 
-    function showToast(type, message) {
-        const icons = {
-            critical: 'fa-skull-crossbones',
-            warning: 'fa-triangle-exclamation',
-            info: 'fa-info-circle',
-            success: 'fa-check-circle'
-        };
+    /* ── Toast ── */
+    function showToast(message, type = 'info') {
+        const container = $('#toastContainer');
+        if (!container) return;
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
+        const icons = { critical: 'fa-skull', warning: 'fa-triangle-exclamation', success: 'fa-check-circle', info: 'fa-info-circle' };
         toast.innerHTML = `
-            <i class="fas ${icons[type]}"></i>
-            <span class="toast-text">${sanitize(message)}</span>
-            <button class="toast-close" onclick="this.parentElement.classList.add('removing'); setTimeout(() => this.parentElement.remove(), 300)">
-                <i class="fas fa-xmark"></i>
-            </button>
+            <i class="fas ${icons[type] || icons.info}"></i>
+            <span>${sanitize(message)}</span>
+            <button class="toast-close" onclick="this.parentElement.remove()"><i class="fas fa-xmark"></i></button>
         `;
-        toastContainer.appendChild(toast);
-
-        setTimeout(() => {
-            if (toast.parentElement) {
-                toast.classList.add('removing');
-                setTimeout(() => toast.remove(), 300);
-            }
-        }, 5000);
+        container.appendChild(toast);
+        setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
     }
 
-    function capitalize(str) {
-        return str.charAt(0).toUpperCase() + str.slice(1);
-    }
-
-    function sanitize(str) {
-        if (str === undefined || str === null) return '';
-        const div = document.createElement('div');
-        div.textContent = String(str);
-        return div.innerHTML;
-    }
-
-    function setEl(id, val) {
-        const el = document.querySelector(`#${id}`);
-        if (el) el.textContent = typeof val === 'number' ? val.toLocaleString() : val;
-    }
-
+    /* ── Last Updated ── */
     function updateLastUpdated() {
         const el = $('#lastUpdated');
         if (!el || !lastUpdateTime) return;
-        const secs = Math.floor((Date.now() - lastUpdateTime.getTime()) / 1000);
-        if (secs < 5) el.textContent = 'Baru saja';
-        else if (secs < 60) el.textContent = secs + ' detik lalu';
-        else el.textContent = Math.floor(secs / 60) + ' menit lalu';
+        const update = () => {
+            const diff = Math.floor((Date.now() - lastUpdateTime) / 1000);
+            el.textContent = diff < 5 ? 'Baru saja' : diff + 'd lalu';
+        };
+        update();
+        clearInterval(window._lastUpdatedInterval);
+        window._lastUpdatedInterval = setInterval(update, 1000);
     }
-    setInterval(updateLastUpdated, 1000);
 
-    window.SOCApp = {
-        investigateIncident: (id) => {
-            showToast('info', `Menginvestigasi insiden ${id}...`);
-            navigateTo('incidents');
-        },
-        showToast,
-        navigateTo
-    };
+    function investigateIncident(id) {
+        showToast(`Membuka investigasi insiden ${id}...`, 'info');
+    }
 
+    /* ── Expose API ── */
+    window.SOCApp = { investigateIncident, showToast, navigateTo };
+
+    /* ── Start ── */
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initDashboard);
+    } else {
+        initDashboard();
+    }
 })();

@@ -1,17 +1,17 @@
 const SOCCharts = (() => {
-    Chart.defaults.color = '#64748b';
-    Chart.defaults.borderColor = 'rgba(20, 30, 48, 0.6)';
-    Chart.defaults.font.family = "'JetBrains Mono', 'Share Tech Mono', monospace";
-    Chart.defaults.font.size = 10;
-    Chart.defaults.plugins.legend.labels.padding = 12;
+    Chart.defaults.color = '#94a3b8';
+    Chart.defaults.borderColor = 'rgba(30, 41, 59, 0.5)';
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.font.size = 11;
+    Chart.defaults.plugins.legend.labels.padding = 16;
     Chart.defaults.plugins.legend.labels.usePointStyle = true;
-    Chart.defaults.plugins.legend.labels.pointStyleWidth = 8;
+    Chart.defaults.plugins.legend.labels.pointStyleWidth = 10;
 
     const chartInstances = {};
 
     const tooltipStyle = {
-        backgroundColor: '#080c14',
-        borderColor: '#1a2744',
+        backgroundColor: '#111927',
+        borderColor: '#1e293b',
         borderWidth: 1,
         titleFont: { weight: '600' },
         padding: 12,
