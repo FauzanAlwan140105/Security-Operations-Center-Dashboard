@@ -789,20 +789,51 @@
         const overlay = $('#mapOverlay');
         if (!overlay) return;
 
-        const dots = [];
+        const html = [];
         let idx = 0;
+
+        // Target positions for monitored sites (Indonesia region)
+        const targetPositions = [
+            { left: 72, top: 50 },
+            { left: 78, top: 52 }
+        ];
+
+        // Simulated global attacker source positions
+        const attackSources = [
+            { left: 16, top: 28, label: 'AS' },
+            { left: 48, top: 18, label: 'EU' },
+            { left: 55, top: 32, label: 'ME' },
+            { left: 78, top: 22, label: 'CN' },
+            { left: 82, top: 20, label: 'JP' },
+            { left: 64, top: 35, label: 'IN' },
+            { left: 22, top: 50, label: 'BR' },
+            { left: 48, top: 45, label: 'AF' },
+            { left: 85, top: 62, label: 'AU' },
+            { left: 73, top: 38, label: 'SEA' }
+        ];
+
         for (const key of getActiveKeys()) {
             const site = scanData[key];
             if (!site) continue;
             const severity = site.status === 'online' ?
                 (site.security_score > 70 ? 'low' : site.security_score > 40 ? 'medium' : 'high') :
                 'critical';
-            const left = idx === 0 ? '68%' : '76%';
-            const top = idx === 0 ? '58%' : '66%';
-            dots.push(`<div class="attack-dot ${severity}" style="left:${left};top:${top};" title="${sanitize(site.name)}: ${site.status.toUpperCase()} | Skor: ${site.security_score}% | ${site.response_time_ms}ms"></div>`);
+            const tp = targetPositions[idx] || targetPositions[0];
+
+            // Target dot (monitored site)
+            html.push(`<div class="attack-dot ${severity}" style="left:${tp.left}%;top:${tp.top}%;width:12px;height:12px;" title="${sanitize(site.name)}: ${site.status.toUpperCase()} | Skor: ${site.security_score}% | ${site.response_time_ms}ms"></div>`);
+
+            // Show some random attack source dots based on events
+            const events = getFilteredEvents(SOCData.getEvents()).filter(e => e.site_key === key);
+            const numSources = Math.min(events.length, attackSources.length);
+            for (let i = 0; i < numSources; i++) {
+                const src = attackSources[i];
+                const evSeverity = events[i] ? events[i].severity : 'low';
+                html.push(`<div class="attack-dot ${evSeverity}" style="left:${src.left}%;top:${src.top}%;width:6px;height:6px;animation-delay:${i * 0.3}s" title="Sumber: ${sanitize(src.label)} — ${sanitize(events[i] ? events[i].title : '')}"></div>`);
+            }
             idx++;
         }
-        overlay.innerHTML = dots.join('');
+        overlay.innerHTML = html.join('');
     }
 
     function renderThreatIntel(events) {
@@ -1185,10 +1216,227 @@
     }
 
     function renderCompliance(scanData) {
+        const scan = scanData || SOCData.getLatestScan();
+        renderNISTCSF(scan);
+        renderOWASP(scan);
+        renderHeaderCompliance(scan);
+    }
+
+    /* ---- NIST Cybersecurity Framework (CSF) v2.0 ---- */
+    function renderNISTCSF(scan) {
+        const container = $('#nistGrid');
+        if (!container) return;
+
+        const allKeys = getActiveKeys();
+        const events = getFilteredEvents(SOCData.getEvents());
+
+        // Gather site-level data
+        let allOnline = true, allSSL = true, hasCSP = false, hasHSTS = false;
+        let hasFWRules = false, avgScore = 0, count = 0;
+        for (const key of allKeys) {
+            const site = scan[key];
+            if (!site) continue;
+            count++;
+            avgScore += site.security_score || 0;
+            if (site.status !== 'online') allOnline = false;
+            if (!site.ssl || !site.ssl.valid) allSSL = false;
+            const h = site.security_headers || {};
+            if (h['Content-Security-Policy'] && h['Content-Security-Policy'].present) hasCSP = true;
+            if (h['Strict-Transport-Security'] && h['Strict-Transport-Security'].present) hasHSTS = true;
+            if (h['X-Frame-Options'] && h['X-Frame-Options'].present) hasFWRules = true;
+        }
+        avgScore = count ? Math.round(avgScore / count) : 0;
+
+        const criticalCount = events.filter(e => e.severity === 'critical').length;
+        const highCount = events.filter(e => e.severity === 'high').length;
+
+        // NIST CSF 6 Functions
+        const nistFunctions = [
+            {
+                id: 'govern', label: 'GOVERN', name: 'Tata Kelola', icon: 'fa-landmark', color: '#00d4ff',
+                cssClass: 'nist-govern',
+                items: [
+                    { name: 'GV.OC — Konteks Organisasi', status: 'pass' },
+                    { name: 'GV.RM — Strategi Manajemen Risiko', status: count > 0 ? 'pass' : 'fail' },
+                    { name: 'GV.SC — Keamanan Rantai Pasokan', status: 'partial' },
+                    { name: 'GV.RR — Peran & Tanggung Jawab', status: 'pass' }
+                ]
+            },
+            {
+                id: 'identify', label: 'IDENTIFY', name: 'Identifikasi', icon: 'fa-magnifying-glass-chart', color: '#3b82f6',
+                cssClass: 'nist-identify',
+                items: [
+                    { name: 'ID.AM — Manajemen Aset', status: count > 0 ? 'pass' : 'fail' },
+                    { name: 'ID.RA — Penilaian Risiko', status: avgScore > 50 ? 'pass' : 'fail' },
+                    { name: 'ID.IM — Peningkatan Berkelanjutan', status: 'partial' }
+                ]
+            },
+            {
+                id: 'protect', label: 'PROTECT', name: 'Proteksi', icon: 'fa-shield-halved', color: '#00ff88',
+                cssClass: 'nist-protect',
+                items: [
+                    { name: 'PR.AA — Manajemen Identitas & Akses', status: hasHSTS ? 'pass' : 'fail' },
+                    { name: 'PR.AT — Kesadaran & Pelatihan', status: 'partial' },
+                    { name: 'PR.DS — Keamanan Data (SSL/TLS)', status: allSSL ? 'pass' : 'fail' },
+                    { name: 'PR.PS — Keamanan Platform', status: hasCSP ? 'pass' : 'fail' },
+                    { name: 'PR.IR — Ketahanan Infrastruktur', status: allOnline ? 'pass' : 'fail' }
+                ]
+            },
+            {
+                id: 'detect', label: 'DETECT', name: 'Deteksi', icon: 'fa-radar', color: '#f59e0b',
+                cssClass: 'nist-detect',
+                items: [
+                    { name: 'DE.CM — Pemantauan Berkelanjutan', status: allOnline ? 'pass' : 'fail' },
+                    { name: 'DE.AE — Analisis Peristiwa Anomali', status: events.length > 0 ? 'pass' : 'partial' }
+                ]
+            },
+            {
+                id: 'respond', label: 'RESPOND', name: 'Respon', icon: 'fa-reply-all', color: '#f97316',
+                cssClass: 'nist-respond',
+                items: [
+                    { name: 'RS.MA — Manajemen Insiden', status: criticalCount === 0 ? 'pass' : 'fail' },
+                    { name: 'RS.AN — Analisis Insiden', status: events.length > 0 ? 'pass' : 'partial' },
+                    { name: 'RS.CO — Pelaporan & Komunikasi', status: 'pass' },
+                    { name: 'RS.MI — Mitigasi Insiden', status: highCount < 3 ? 'pass' : 'fail' }
+                ]
+            },
+            {
+                id: 'recover', label: 'RECOVER', name: 'Pemulihan', icon: 'fa-rotate', color: '#a855f7',
+                cssClass: 'nist-recover',
+                items: [
+                    { name: 'RC.RP — Eksekusi Rencana Pemulihan', status: allOnline ? 'pass' : 'fail' },
+                    { name: 'RC.CO — Komunikasi Pemulihan', status: 'pass' }
+                ]
+            }
+        ];
+
+        container.innerHTML = nistFunctions.map(func => {
+            const passCount = func.items.filter(i => i.status === 'pass').length;
+            const partialCount = func.items.filter(i => i.status === 'partial').length;
+            const score = Math.round(((passCount + partialCount * 0.5) / func.items.length) * 100);
+            const circumference = 2 * Math.PI * 24;
+            const offset = circumference - (score / 100) * circumference;
+            const scoreColor = score > 70 ? '#00ff88' : score > 40 ? '#f59e0b' : '#ff3b5c';
+
+            return `
+                <div class="compliance-card ${func.cssClass}">
+                    <div class="compliance-card-header">
+                        <div>
+                            <div class="compliance-func-label">${func.label}</div>
+                            <span class="compliance-framework">${sanitize(func.name)}</span>
+                        </div>
+                        <div class="compliance-score-ring">
+                            <svg viewBox="0 0 60 60">
+                                <circle cx="30" cy="30" r="24" fill="none" stroke="var(--border-primary)" stroke-width="5"/>
+                                <circle cx="30" cy="30" r="24" fill="none" stroke="${scoreColor}" stroke-width="5"
+                                    stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
+                            </svg>
+                            <span class="compliance-score-value" style="color:${scoreColor}">${score}%</span>
+                        </div>
+                    </div>
+                    <div class="compliance-details">
+                        ${func.items.map(item => `
+                            <div class="compliance-item">
+                                <span>${sanitize(item.name)}</span>
+                                <span class="${item.status === 'pass' ? 'compliance-check' : item.status === 'partial' ? 'compliance-partial' : 'compliance-fail'}" style="font-size:0.75rem">
+                                    ${item.status === 'pass' ? '<i class="fas fa-check-circle"></i> Lulus' : item.status === 'partial' ? '<i class="fas fa-exclamation-circle"></i> Sebagian' : '<i class="fas fa-times-circle"></i> Gagal'}
+                                </span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    /* ---- OWASP Top 10 (2021) Compliance ---- */
+    function renderOWASP(scan) {
+        const container = $('#owaspGrid');
+        if (!container) return;
+
+        const allKeys = getActiveKeys();
+        let hasCSP = false, hasHSTS = false, hasXFO = false, hasXCTO = false;
+        let hasRP = false, hasPP = false, allSSL = true, allHTTPS = true;
+        let count = 0;
+
+        for (const key of allKeys) {
+            const site = scan[key];
+            if (!site) continue;
+            count++;
+            const h = site.security_headers || {};
+            if (h['Content-Security-Policy'] && h['Content-Security-Policy'].present) hasCSP = true;
+            if (h['Strict-Transport-Security'] && h['Strict-Transport-Security'].present) hasHSTS = true;
+            if (h['X-Frame-Options'] && h['X-Frame-Options'].present) hasXFO = true;
+            if (h['X-Content-Type-Options'] && h['X-Content-Type-Options'].present) hasXCTO = true;
+            if (h['Referrer-Policy'] && h['Referrer-Policy'].present) hasRP = true;
+            if (h['Permissions-Policy'] && h['Permissions-Policy'].present) hasPP = true;
+            if (!site.ssl || !site.ssl.valid) allSSL = false;
+            if (!(site.url || '').startsWith('https')) allHTTPS = false;
+        }
+
+        const owaspItems = [
+            { code: 'A01', name: 'Broken Access Control', status: hasXFO && hasPP ? 'pass' : hasXFO || hasPP ? 'partial' : 'fail',
+              detail: hasXFO ? 'X-Frame-Options aktif' : 'X-Frame-Options tidak ditemukan' },
+            { code: 'A02', name: 'Cryptographic Failures', status: allSSL && allHTTPS && hasHSTS ? 'pass' : allSSL ? 'partial' : 'fail',
+              detail: allSSL ? 'SSL/TLS terenkripsi' : 'Sertifikat SSL tidak valid' },
+            { code: 'A03', name: 'Injection', status: hasCSP ? 'pass' : 'fail',
+              detail: hasCSP ? 'CSP melindungi dari XSS injection' : 'Content-Security-Policy tidak ditemukan' },
+            { code: 'A04', name: 'Insecure Design', status: 'partial',
+              detail: 'Review desain keamanan diperlukan secara berkala' },
+            { code: 'A05', name: 'Security Misconfiguration', status: hasHSTS && hasXCTO && hasRP ? 'pass' : 'fail',
+              detail: hasHSTS ? 'Security headers terkonfigurasi' : 'Header keamanan belum lengkap' },
+            { code: 'A06', name: 'Vulnerable Components', status: 'partial',
+              detail: 'Diperlukan audit komponen secara berkala' },
+            { code: 'A07', name: 'Auth Failures', status: hasHSTS ? 'pass' : 'fail',
+              detail: hasHSTS ? 'HSTS mencegah downgrade autentikasi' : 'HSTS tidak diterapkan' },
+            { code: 'A08', name: 'Data Integrity Failures', status: hasXCTO && hasCSP ? 'pass' : 'partial',
+              detail: hasXCTO ? 'Proteksi tipe konten aktif' : 'X-Content-Type-Options tidak ditemukan' },
+            { code: 'A09', name: 'Logging & Monitoring', status: count > 0 ? 'pass' : 'fail',
+              detail: count > 0 ? 'Pemantauan real-time aktif' : 'Belum ada pemantauan' },
+            { code: 'A10', name: 'Server-Side Request Forgery', status: hasRP ? 'pass' : 'partial',
+              detail: hasRP ? 'Referrer-Policy membatasi request origin' : 'Referrer-Policy tidak ditemukan' }
+        ];
+
+        container.innerHTML = owaspItems.map(item => {
+            const score = item.status === 'pass' ? 100 : item.status === 'partial' ? 50 : 0;
+            const circumference = 2 * Math.PI * 24;
+            const offset = circumference - (score / 100) * circumference;
+            const scoreColor = score > 70 ? '#00ff88' : score > 30 ? '#f59e0b' : '#ff3b5c';
+
+            return `
+                <div class="compliance-card">
+                    <div class="compliance-card-header">
+                        <div>
+                            <div class="compliance-func-label">${sanitize(item.code)}</div>
+                            <span class="compliance-framework" style="font-size:0.85rem">${sanitize(item.name)}</span>
+                        </div>
+                        <div class="compliance-score-ring">
+                            <svg viewBox="0 0 60 60">
+                                <circle cx="30" cy="30" r="24" fill="none" stroke="var(--border-primary)" stroke-width="5"/>
+                                <circle cx="30" cy="30" r="24" fill="none" stroke="${scoreColor}" stroke-width="5"
+                                    stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
+                            </svg>
+                            <span class="compliance-score-value" style="color:${scoreColor}">${score}%</span>
+                        </div>
+                    </div>
+                    <div class="compliance-details">
+                        <div class="compliance-item">
+                            <span>${sanitize(item.detail)}</span>
+                            <span class="${item.status === 'pass' ? 'compliance-check' : item.status === 'partial' ? 'compliance-partial' : 'compliance-fail'}" style="font-size:0.75rem">
+                                ${item.status === 'pass' ? '<i class="fas fa-check-circle"></i> Lulus' : item.status === 'partial' ? '<i class="fas fa-exclamation-circle"></i> Sebagian' : '<i class="fas fa-times-circle"></i> Gagal'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    /* ---- Per-Site Security Headers compliance (original) ---- */
+    function renderHeaderCompliance(scan) {
         const container = $('#complianceGrid');
         if (!container) return;
 
-        const scan = scanData || SOCData.getLatestScan();
         const frameworks = [];
 
         for (const key of getActiveKeys()) {
@@ -1220,19 +1468,6 @@
                 items
             });
         }
-
-        const allScores = frameworks.map(f => f.score);
-        const avgScore = allScores.length ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 0;
-        frameworks.push({
-            framework: 'Keamanan Keseluruhan',
-            score: avgScore,
-            color: avgScore > 70 ? '#00ff88' : avgScore > 40 ? '#f59e0b' : '#ff3b5c',
-            items: [
-                { name: 'Semua Situs Online', status: getActiveKeys().every(k => scan[k] && scan[k].status === 'online') ? 'pass' : 'fail' },
-                { name: 'Sertifikat SSL Valid', status: getActiveKeys().every(k => scan[k] && scan[k].ssl && scan[k].ssl.valid) ? 'pass' : 'fail' },
-                { name: 'Skor Rata-rata > 50%', status: avgScore > 50 ? 'pass' : 'fail' }
-            ]
-        });
 
         container.innerHTML = frameworks.map(c => {
             const circumference = 2 * Math.PI * 24;
