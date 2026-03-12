@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dasbor SOC — Pusat Operasi Keamanan</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Preloader -->
+    <div id="preloader">
+        <div class="loader-ring">
+            <div class="loader-ring-inner"></div>
+        </div>
+        <p class="loader-text">MENGINISIALISASI SISTEM SOC<span class="dot-anim">...</span></p>
+    </div>
+
+    <!-- Main Container -->
+    <div class="soc-container" id="socContainer">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <i class="fas fa-shield-halved"></i>
+                    </div>
+                    <div class="logo-text">
+                        <h1>SOC</h1>
+                        <span>Pusat Komando</span>
+                    </div>
+                </div>
+                <button class="sidebar-toggle" id="sidebarToggle">
+                    <i class="fas fa-angles-left"></i>
+                </button>
+            </div>
+
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <span class="nav-section-title">UTAMA</span>
+                    <a href="#" class="nav-link active" data-page="dashboard">
+                        <i class="fas fa-gauge-high"></i>
+                        <span>Dasbor</span>
+                    </a>
+                    <a href="#" class="nav-link" data-page="threats">
+                        <i class="fas fa-skull-crossbones"></i>
+                        <span>Intelijen Ancaman</span>
+                        <span class="nav-badge critical" id="navBadgeThreat">--</span>
+                    </a>
+                    <a href="#" class="nav-link" data-page="incidents">
+                        <i class="fas fa-triangle-exclamation"></i>
+                        <span>Insiden</span>
+                        <span class="nav-badge warning" id="navBadgeIncident">--</span>
+                    </a>
+                    <a href="#" class="nav-link" data-page="network">
+                        <i class="fas fa-network-wired"></i>
+                        <span>Monitor Jaringan</span>
+                    </a>
+                </div>
+                <div class="nav-section">
+                    <span class="nav-section-title">ANALISIS</span>
+                    <a href="#" class="nav-link" data-page="logs">
+                        <i class="fas fa-scroll"></i>
+                        <span>Analisis Log</span>
+                    </a>
+                    <a href="#" class="nav-link" data-page="vulnerabilities">
+                        <i class="fas fa-bug"></i>
+                        <span>Kerentanan</span>
+                        <span class="nav-badge high" id="navBadgeVuln">--</span>
+                    </a>
+                    <a href="#" class="nav-link" data-page="endpoints">
+                        <i class="fas fa-laptop-medical"></i>
+                        <span>Titik Akhir</span>
+                    </a>
+                    <a href="#" class="nav-link" data-page="firewall">
+                        <i class="fas fa-fire"></i>
+                        <span>Firewall</span>
+                    </a>
+                </div>
+                <div class="nav-section">
+                    <span class="nav-section-title">ASET</span>
+                    <a href="#" class="nav-link" data-page="assets">
+                        <i class="fas fa-server"></i>
+                        <span>Inventaris Aset</span>
+                    </a>
+                    <a href="#" class="nav-link" data-page="compliance">
+                        <i class="fas fa-clipboard-check"></i>
+                        <span>Kepatuhan</span>
+                    </a>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="operator-info">
+                    <div class="operator-avatar">
+                        <i class="fas fa-user-shield"></i>
+                        <span class="status-dot online"></span>
+                    </div>
+                    <div class="operator-details">
+                        <span class="operator-name">Analis SOC</span>
+                        <span class="operator-role">Level 3 — Aktif</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <div class="breadcrumb">
+                        <i class="fas fa-home"></i>
+                        <span>/</span>
+                        <span id="currentPage">Dasbor</span>
+                    </div>
+                </div>
+                <div class="topbar-center">
+                    <div class="search-box">
+                        <i class="fas fa-magnifying-glass"></i>
+                        <input type="text" placeholder="Cari ancaman, IP, domain..." id="globalSearch">
+                        <kbd>Ctrl+K</kbd>
+                    </div>
+                </div>
+                <div class="topbar-right">
+                    <div class="topbar-actions">
+                        <!-- Website Selector -->
+                        <div class="website-selector">
+                            <i class="fas fa-filter"></i>
+                            <select id="websiteFilter">
+                                <option value="all">Semua Website</option>
+                                <option value="himatika">himatikafmipaunhas</option>
+                                <option value="fotografi">ukmfotografiunhas.com</option>
+                            </select>
+                        </div>
+                        <button class="topbar-btn scan-btn" id="scanNowBtn" title="Pindai Sekarang">
+                            <i class="fas fa-radar"></i>
+                        </button>
+                        <button class="topbar-btn" id="alertsBtn" title="Peringatan">
+                            <i class="fas fa-bell"></i>
+                            <span class="notification-badge" id="notifBadge">0</span>
+                        </button>
+                        <button class="topbar-btn" id="fullscreenBtn" title="Layar Penuh">
+                            <i class="fas fa-expand"></i>
+                        </button>
+                        <div class="threat-level-indicator">
+                            <span class="threat-label">LEVEL ANCAMAN</span>
+                            <span class="threat-value" id="globalThreatLevel">--</span>
+                        </div>
+                    </div>
+                    <div class="live-status">
+                        <div class="connection-indicator">
+                            <span class="connection-dot online" id="connectionStatus"></span>
+                            <span class="connection-label">LANGSUNG</span>
+                        </div>
+                        <div class="last-updated-indicator">
+                            <i class="fas fa-sync-alt"></i>
+                            <span id="lastUpdated">--</span>
+                        </div>
+                    </div>
+                    <div class="live-clock">
+                        <i class="fas fa-clock"></i>
+                        <span id="liveClock">--:--:--</span>
+                        <span class="clock-label">UTC</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Alert Banner -->
+            <div class="alert-banner critical" id="alertBanner">
+                <i class="fas fa-radiation"></i>
+                <span id="alertMessage"><strong>MENGINISIALISASI:</strong> Menghubungkan ke backend pemantauan langsung...</span>
+                <button class="alert-dismiss" id="dismissAlert"><i class="fas fa-xmark"></i></button>
+            </div>
+
+            <!-- Dashboard Page -->
+            <div class="page-content active" id="page-dashboard">
+                <!-- Stats Overview -->
+                <div class="stats-grid">
+                    <div class="stat-card critical-glow">
+                        <div class="stat-icon critical"><i class="fas fa-skull"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="totalThreats">--</span>
+                            <span class="stat-label">Peristiwa Keamanan</span>
+                        </div>
+                        <div class="stat-trend" id="trendThreats"><i class="fas fa-minus"></i> --</div>
+                        <div class="stat-sparkline" id="sparkThreats"></div>
+                    </div>
+                    <div class="stat-card warning-glow">
+                        <div class="stat-icon warning"><i class="fas fa-triangle-exclamation"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="activeIncidents">--</span>
+                            <span class="stat-label">Insiden Aktif</span>
+                        </div>
+                        <div class="stat-trend" id="trendIncidents"><i class="fas fa-minus"></i> --</div>
+                        <div class="stat-sparkline" id="sparkIncidents"></div>
+                    </div>
+                    <div class="stat-card success-glow">
+                        <div class="stat-icon success"><i class="fas fa-shield-halved"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="blockedAttacks">--</span>
+                            <span class="stat-label">Rata-rata Skor Keamanan</span>
+                        </div>
+                        <div class="stat-trend" id="trendScore"><i class="fas fa-minus"></i> --</div>
+                        <div class="stat-sparkline" id="sparkBlocked"></div>
+                    </div>
+                    <div class="stat-card info-glow">
+                        <div class="stat-icon info"><i class="fas fa-eye"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="monitoredAssets">--</span>
+                            <span class="stat-label">Situs Terpantau</span>
+                        </div>
+                        <div class="stat-trend" id="trendAssets"><i class="fas fa-minus"></i> --</div>
+                        <div class="stat-sparkline" id="sparkAssets"></div>
+                    </div>
+                    <div class="stat-card purple-glow">
+                        <div class="stat-icon purple"><i class="fas fa-user-secret"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="suspiciousIPs">--</span>
+                            <span class="stat-label">Peringatan</span>
+                        </div>
+                        <div class="stat-trend" id="trendWarnings"><i class="fas fa-minus"></i> --</div>
+                        <div class="stat-sparkline" id="sparkIPs"></div>
+                    </div>
+                    <div class="stat-card cyan-glow">
+                        <div class="stat-icon cyan"><i class="fas fa-globe"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="totalTraffic">--</span>
+                            <span class="stat-label">Total Pemindaian</span>
+                        </div>
+                        <div class="stat-trend" id="trendScans"><i class="fas fa-minus"></i> --</div>
+                        <div class="stat-sparkline" id="sparkTraffic"></div>
+                    </div>
+                </div>
+
+                <!-- Website Status Cards -->
+                <div class="website-status-section">
+                    <h2 class="section-title"><i class="fas fa-globe"></i> STATUS WEBSITE TERPANTAU</h2>
+                    <div class="website-cards">
+                        <div class="website-card" id="card-himatika">
+                            <div class="website-card-header">
+                                <div class="website-name">
+                                    <span class="website-dot online"></span>
+                                    <h3>himatikafmipaunhas</h3>
+                                </div>
+                                <span class="website-status online">ONLINE</span>
+                            </div>
+                            <div class="website-card-body">
+                                <div class="website-metrics">
+                                    <div class="w-metric">
+                                        <span class="w-metric-value" id="him-uptime">--</span>
+                                        <span class="w-metric-label">Waktu Aktif</span>
+                                    </div>
+                                    <div class="w-metric">
+                                        <span class="w-metric-value" id="him-response">--</span>
+                                        <span class="w-metric-label">Respons</span>
+                                    </div>
+                                    <div class="w-metric">
+                                        <span class="w-metric-value" id="him-threats">--</span>
+                                        <span class="w-metric-label">Skor Keamanan</span>
+                                    </div>
+                                    <div class="w-metric">
+                                        <span class="w-metric-value" id="him-ssl">--</span>
+                                        <span class="w-metric-label">Sertifikat SSL</span>
+                                    </div>
+                                </div>
+                                <div class="website-mini-chart" id="himatika-chart"></div>
+                                <div class="website-threat-bar" id="him-threat-bar"></div>
+                            </div>
+                        </div>
+
+                        <div class="website-card" id="card-fotografi">
+                            <div class="website-card-header">
+                                <div class="website-name">
+                                    <span class="website-dot online"></span>
+                                    <h3>ukmfotografiunhas.com</h3>
+                                </div>
+                                <span class="website-status online">ONLINE</span>
+                            </div>
+                            <div class="website-card-body">
+                                <div class="website-metrics">
+                                    <div class="w-metric">
+                                        <span class="w-metric-value" id="foto-uptime">--</span>
+                                        <span class="w-metric-label">Waktu Aktif</span>
+                                    </div>
+                                    <div class="w-metric">
+                                        <span class="w-metric-value" id="foto-response">--</span>
+                                        <span class="w-metric-label">Respons</span>
+                                    </div>
+                                    <div class="w-metric">
+                                        <span class="w-metric-value" id="foto-threats">--</span>
+                                        <span class="w-metric-label">Skor Keamanan</span>
+                                    </div>
+                                    <div class="w-metric">
+                                        <span class="w-metric-value" id="foto-ssl">--</span>
+                                        <span class="w-metric-label">Sertifikat SSL</span>
+                                    </div>
+                                </div>
+                                <div class="website-mini-chart" id="fotografi-chart"></div>
+                                <div class="website-threat-bar" id="foto-threat-bar"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Row -->
+                <div class="charts-grid">
+                    <div class="chart-card large">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-chart-area"></i> Garis Waktu Aktivitas Ancaman (24j)</h3>
+                            <div class="chart-controls">
+                                <button class="chart-btn active" data-range="24h">24H</button>
+                                <button class="chart-btn" data-range="7d">7D</button>
+                                <button class="chart-btn" data-range="30d">30D</button>
+                            </div>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="threatTimeline"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-chart-pie"></i> Distribusi Jenis Serangan</h3>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="attackTypes"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Second Row -->
+                <div class="charts-grid three-col">
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-earth-americas"></i> Asal Serangan Teratas</h3>
+                        </div>
+                        <div class="chart-body">
+                            <div class="geo-list" id="attackOrigins">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-chart-bar"></i> Lalu Lintas per Protokol</h3>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="protocolChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-chart-line"></i> Tren Tingkat Keparahan</h3>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="severityTrend"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Feed & Map -->
+                <div class="split-section">
+                    <!-- World Map / Geo Threat -->
+                    <div class="chart-card geo-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-map-location-dot"></i> Peta Ancaman Geografis</h3>
+                            <span class="live-indicator"><span class="live-dot"></span> LANGSUNG</span>
+                        </div>
+                        <div class="chart-body geo-body">
+                            <div class="world-map" id="worldMap">
+                                <svg viewBox="0 0 1000 500" id="mapSvg">
+                                    <!-- Simplified world map paths -->
+                                </svg>
+                                <div class="map-overlay" id="mapOverlay">
+                                    <!-- Attack indicators populated by JS -->
+                                </div>
+                            </div>
+                            <div class="geo-stats">
+                                <div class="geo-stat">
+                                    <span class="geo-stat-value" id="liveAttacks">--</span>
+                                    <span class="geo-stat-label">Serangan Langsung</span>
+                                </div>
+                                <div class="geo-stat">
+                                    <span class="geo-stat-value" id="countriesBlocked">--</span>
+                                    <span class="geo-stat-label">Negara Diblokir</span>
+                                </div>
+                                <div class="geo-stat">
+                                    <span class="geo-stat-value" id="ipsBlacklisted">--</span>
+                                    <span class="geo-stat-label">IP Daftar Hitam</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Event Feed -->
+                    <div class="chart-card feed-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-bolt"></i> Peristiwa Keamanan Langsung</h3>
+                            <span class="live-indicator"><span class="live-dot"></span> LANGSUNG</span>
+                        </div>
+                        <div class="chart-body">
+                            <div class="event-feed" id="eventFeed">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Incident Table -->
+                <div class="table-section">
+                    <div class="chart-card full-width">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-list-check"></i> Insiden Keamanan Terkini</h3>
+                            <div class="table-controls">
+                                <select id="incidentFilter">
+                                    <option value="all">Semua Tingkat</option>
+                                    <option value="critical">Kritis</option>
+                                    <option value="high">Tinggi</option>
+                                    <option value="medium">Sedang</option>
+                                    <option value="low">Rendah</option>
+                                </select>
+                                <button class="btn-sm" id="exportIncidents"><i class="fas fa-download"></i> Ekspor</button>
+                            </div>
+                        </div>
+                        <div class="chart-body table-body">
+                            <table class="soc-table" id="incidentTable">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Waktu</th>
+                                        <th>Website</th>
+                                        <th>Tipe</th>
+                                        <th>IP Sumber</th>
+                                        <th>Tingkat</th>
+                                        <th>Status</th>
+                                        <th>Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="incidentTableBody">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MITRE ATT&CK & System Health -->
+                <div class="charts-grid two-col">
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-chess-knight"></i> Teknik MITRE ATT&CK Terdeteksi</h3>
+                        </div>
+                        <div class="chart-body">
+                            <div class="mitre-grid" id="mitreGrid">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-heartbeat"></i> Kesehatan Sistem</h3>
+                        </div>
+                        <div class="chart-body">
+                            <div class="health-grid">
+                                <div class="health-item">
+                                    <div class="health-ring" data-percent="0" data-color="#00ff88" id="ringHimatika">
+                                        <svg viewBox="0 0 120 120">
+                                            <circle cx="60" cy="60" r="54" class="health-bg"/>
+                                            <circle cx="60" cy="60" r="54" class="health-progress" id="healthCPU"/>
+                                        </svg>
+                                        <span class="health-value" id="healthValHim">--%</span>
+                                    </div>
+                                    <span class="health-label">Kesehatan himatika</span>
+                                </div>
+                                <div class="health-item">
+                                    <div class="health-ring" data-percent="0" data-color="#a855f7" id="ringFotografi">
+                                        <svg viewBox="0 0 120 120">
+                                            <circle cx="60" cy="60" r="54" class="health-bg"/>
+                                            <circle cx="60" cy="60" r="54" class="health-progress" id="healthRAM"/>
+                                        </svg>
+                                        <span class="health-value" id="healthValFoto">--%</span>
+                                    </div>
+                                    <span class="health-label">Kesehatan fotografi</span>
+                                </div>
+                                <div class="health-item">
+                                    <div class="health-ring" data-percent="0" data-color="#00d4ff" id="ringSSL">
+                                        <svg viewBox="0 0 120 120">
+                                            <circle cx="60" cy="60" r="54" class="health-bg"/>
+                                            <circle cx="60" cy="60" r="54" class="health-progress" id="healthDisk"/>
+                                        </svg>
+                                        <span class="health-value" id="healthValSSL">--%</span>
+                                    </div>
+                                    <span class="health-label">Kesehatan SSL</span>
+                                </div>
+                                <div class="health-item">
+                                    <div class="health-ring" data-percent="0" data-color="#f59e0b" id="ringOverall">
+                                        <svg viewBox="0 0 120 120">
+                                            <circle cx="60" cy="60" r="54" class="health-bg"/>
+                                            <circle cx="60" cy="60" r="54" class="health-progress" id="healthNetwork"/>
+                                        </svg>
+                                        <span class="health-value" id="healthValOverall">--%</span>
+                                    </div>
+                                    <span class="health-label">Skor Keseluruhan</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top Blocked IPs & WAF Rules -->
+                <div class="charts-grid two-col">
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-ban"></i> IP Terblokir Teratas</h3>
+                        </div>
+                        <div class="chart-body">
+                            <div class="blocked-ips-list" id="blockedIPsList">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-shield-virus"></i> Pemicu Aturan WAF</h3>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="wafChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Threat Intel Page -->
+            <div class="page-content" id="page-threats">
+                <div class="page-header">
+                    <h2><i class="fas fa-skull-crossbones"></i> Pusat Intelijen Ancaman</h2>
+                    <p>Intelijen ancaman dan analisis waktu nyata untuk aset terpantau</p>
+                </div>
+                <div class="threat-intel-grid">
+                    <div class="intel-card">
+                        <div class="intel-header critical">
+                            <i class="fas fa-virus"></i>
+                            <h3>Kampanye Malware Aktif</h3>
+                        </div>
+                        <div class="intel-body" id="malwareCampaigns">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div class="intel-card">
+                        <div class="intel-header high">
+                            <i class="fas fa-fingerprint"></i>
+                            <h3>Indikator IOC</h3>
+                        </div>
+                        <div class="intel-body" id="iocIndicators">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div class="intel-card">
+                        <div class="intel-header warning">
+                            <i class="fas fa-ghost"></i>
+                            <h3>Aktivitas Grup APT</h3>
+                        </div>
+                        <div class="intel-body" id="aptGroups">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div class="intel-card full-width">
+                        <div class="intel-header info">
+                            <i class="fas fa-newspaper"></i>
+                            <h3>Umpan Ancaman — Terbaru</h3>
+                        </div>
+                        <div class="intel-body" id="threatFeed">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Incidents Page -->
+            <div class="page-content" id="page-incidents">
+                <div class="page-header">
+                    <h2><i class="fas fa-triangle-exclamation"></i> Manajemen Respons Insiden</h2>
+                    <p>Lacak, investigasi, dan tanggapi insiden keamanan</p>
+                </div>
+                <div class="incident-board">
+                    <div class="incident-column">
+                        <div class="column-header new">
+                            <h4>Baru <span class="col-count" id="countNew">0</span></h4>
+                        </div>
+                        <div class="column-body" id="incidentsNew">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div class="incident-column">
+                        <div class="column-header investigating">
+                            <h4>Investigasi <span class="col-count" id="countInvestigating">0</span></h4>
+                        </div>
+                        <div class="column-body" id="incidentsInvestigating">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div class="incident-column">
+                        <div class="column-header containment">
+                            <h4>Penahanan <span class="col-count" id="countContainment">0</span></h4>
+                        </div>
+                        <div class="column-body" id="incidentsContainment">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                    <div class="incident-column">
+                        <div class="column-header resolved">
+                            <h4>Terselesaikan <span class="col-count" id="countResolved">0</span></h4>
+                        </div>
+                        <div class="column-body" id="incidentsResolved">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Network Monitor Page -->
+            <div class="page-content" id="page-network">
+                <div class="page-header">
+                    <h2><i class="fas fa-network-wired"></i> Monitor Lalu Lintas Jaringan</h2>
+                    <p>Analisis jaringan waktu nyata dan deteksi anomali</p>
+                </div>
+                <div class="network-stats">
+                    <div class="net-stat">
+                        <i class="fas fa-arrow-down text-cyan"></i>
+                        <div>
+                            <span class="net-stat-value" id="netInbound">--</span>
+                            <span class="net-stat-label">Respons himatika</span>
+                        </div>
+                    </div>
+                    <div class="net-stat">
+                        <i class="fas fa-arrow-up text-green"></i>
+                        <div>
+                            <span class="net-stat-value" id="netOutbound">--</span>
+                            <span class="net-stat-label">Respons fotografi</span>
+                        </div>
+                    </div>
+                    <div class="net-stat">
+                        <i class="fas fa-link text-purple"></i>
+                        <div>
+                            <span class="net-stat-value" id="netConnections">--</span>
+                            <span class="net-stat-label">Situs Online</span>
+                        </div>
+                    </div>
+                    <div class="net-stat">
+                        <i class="fas fa-triangle-exclamation text-red"></i>
+                        <div>
+                            <span class="net-stat-value" id="netAnomalies">--</span>
+                            <span class="net-stat-label">Peringatan Keamanan</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="charts-grid two-col">
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3>Penggunaan Bandwidth</h3>
+                            <span class="live-indicator"><span class="live-dot"></span> LANGSUNG</span>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="bandwidthChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3>Distribusi Koneksi</h3>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="connectionChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Log Analysis Page -->
+            <div class="page-content" id="page-logs">
+                <div class="page-header">
+                    <h2><i class="fas fa-scroll"></i> Analisis Log Keamanan</h2>
+                    <p>Manajemen log terpusat dan analisis ala SIEM</p>
+                </div>
+                <div class="log-controls">
+                    <div class="log-search">
+                        <i class="fas fa-magnifying-glass"></i>
+                        <input type="text" placeholder="Cari log... (mis., 'SQL injection' atau '192.168.1.1')" id="logSearch">
+                    </div>
+                    <div class="log-filters">
+                        <select id="logLevel">
+                            <option value="all">Semua Level</option>
+                            <option value="emergency">Darurat</option>
+                            <option value="alert">Waspada</option>
+                            <option value="critical">Kritis</option>
+                            <option value="error">Galat</option>
+                            <option value="warning">Peringatan</option>
+                            <option value="info">Info</option>
+                        </select>
+                        <select id="logSource">
+                            <option value="all">Semua Sumber</option>
+                            <option value="waf">WAF</option>
+                            <option value="ids">IDS/IPS</option>
+                            <option value="firewall">Firewall</option>
+                            <option value="auth">Autentikasi</option>
+                            <option value="system">Sistem</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="log-viewer" id="logViewer">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Vulnerabilities Page -->
+            <div class="page-content" id="page-vulnerabilities">
+                <div class="page-header">
+                    <h2><i class="fas fa-bug"></i> Manajemen Kerentanan</h2>
+                    <p>Hasil pemindaian dan pelacakan kerentanan untuk semua aset terpantau</p>
+                </div>
+                <div class="vuln-summary">
+                    <div class="vuln-stat critical"><span class="vuln-count" id="vulnCritical">0</span><span>Kritis</span></div>
+                    <div class="vuln-stat high"><span class="vuln-count" id="vulnHigh">0</span><span>Tinggi</span></div>
+                    <div class="vuln-stat medium"><span class="vuln-count" id="vulnMedium">0</span><span>Sedang</span></div>
+                    <div class="vuln-stat low"><span class="vuln-count" id="vulnLow">0</span><span>Rendah</span></div>
+                    <div class="vuln-stat info"><span class="vuln-count" id="vulnInfo">0</span><span>Info</span></div>
+                </div>
+                <div class="vuln-list" id="vulnList">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Endpoints Page -->
+            <div class="page-content" id="page-endpoints">
+                <div class="page-header">
+                    <h2><i class="fas fa-laptop-medical"></i> Keamanan Titik Akhir</h2>
+                    <p>Pantau dan lindungi titik akhir di seluruh infrastruktur</p>
+                </div>
+                <div class="endpoint-grid" id="endpointGrid">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Firewall Page -->
+            <div class="page-content" id="page-firewall">
+                <div class="page-header">
+                    <h2><i class="fas fa-fire"></i> Manajemen Firewall</h2>
+                    <p>Aturan firewall, log, dan penyaringan lalu lintas waktu nyata</p>
+                </div>
+                <div class="firewall-rules" id="firewallRules">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Assets Page -->
+            <div class="page-content" id="page-assets">
+                <div class="page-header">
+                    <h2><i class="fas fa-server"></i> Inventaris Aset</h2>
+                    <p>Inventaris lengkap semua aset infrastruktur terpantau</p>
+                </div>
+                <div class="asset-grid" id="assetGrid">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Compliance Page -->
+            <div class="page-content" id="page-compliance">
+                <div class="page-header">
+                    <h2><i class="fas fa-clipboard-check"></i> Dasbor Kepatuhan</h2>
+                    <p>Status kepatuhan regulasi dan jejak audit</p>
+                </div>
+                <div class="compliance-grid" id="complianceGrid">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Notification Panel -->
+    <div class="notification-panel" id="notificationPanel">
+        <div class="notif-header">
+            <h3><i class="fas fa-bell"></i> Peringatan & Notifikasi</h3>
+            <button class="notif-close" id="notifClose"><i class="fas fa-xmark"></i></button>
+        </div>
+        <div class="notif-list" id="notifList">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Chart.js & Socket.IO -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="js/data.js"></script>
+    <script src="js/charts.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
